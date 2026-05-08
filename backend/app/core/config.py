@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
     database_url: str
+    google_api_key: str = ""
 
     # Auth configs
     secret_key: str
@@ -13,6 +14,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

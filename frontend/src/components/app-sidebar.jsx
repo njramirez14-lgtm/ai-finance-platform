@@ -10,6 +10,7 @@ import {
   Settings2,
   Table2Icon,
   Layers,
+  TrendingUp,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -71,6 +72,11 @@ export function AppSidebar({ ...props }) {
         title: "Categories",
         url: "/categories",
         icon: Layers,
+      },
+      {
+        title: "Trading",
+        url: "/trading",
+        icon: TrendingUp,
       },
       {
         title: "Settings",

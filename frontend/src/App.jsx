@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import LoginPage from "./pages/login";
 import SignupPage from "./pages/signup";
 import ReportsPage from "./pages/reports";
+import TradingPage from "./pages/trading";
 import SettingsPage from "./pages/settings";
 import DashboardPage from "./pages/dashboard";
 import TransactionsPage from "./pages/transactions";
@@ -65,6 +66,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ReportsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trading"
+            element={
+              <ProtectedRoute>
+                <TradingPage />
               </ProtectedRoute>
             }
           />
