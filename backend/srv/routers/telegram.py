@@ -284,7 +284,11 @@ async def telegram_webhook(
     db: Session = Depends(get_db),
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
-    if TG_WEBHOOK_SECRET and x_telegram_bot_api_secret_token != TG_WEBHOOK_SECRET:
+    # Hard-fail if secret not configured. Empty TG_WEBHOOK_SECRET previously
+    # meant "allow any caller", which let anyone POST fake updates.
+    if not TG_WEBHOOK_SECRET:
+        raise HTTPException(503, "Webhook secret not configured")
+    if x_telegram_bot_api_secret_token != TG_WEBHOOK_SECRET:
         raise HTTPException(403, "Forbidden")
     if not TG_TOKEN:
         raise HTTPException(503, "Telegram bot token not configured")
