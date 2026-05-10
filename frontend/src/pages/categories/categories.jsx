@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Edit, Trash, Loader2, AlertCircle, Tag } from "lucide-react";
+import { Plus, Edit, Trash, Loader2, AlertCircle, Tag, Sparkles } from "lucide-react";
 import Layout from "@/components/layout";
 import api from "@/api/axios";
 
@@ -25,6 +25,7 @@ export default function CategoriesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", type: "EXPENSE" });
+  const [seeding, setSeeding] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -71,6 +72,22 @@ export default function CategoriesPage() {
     }
   };
 
+  const handleSeed = async () => {
+    setSeeding(true);
+    setError(null);
+    try {
+      const { data } = await api.post("/categories/seed");
+      await load();
+      if (data && data.length === 0) {
+        setError("Ya tenías todas las sugeridas. No se ha añadido ninguna.");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || "Error rellenando categorías");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const handleDelete = async (cat) => {
     if (!window.confirm(`¿Borrar la categoría "${cat.name}"?`)) return;
     try {
@@ -96,6 +113,11 @@ export default function CategoriesPage() {
               Organiza tus ingresos y gastos en categorías personalizadas.
             </p>
           </div>
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" onClick={handleSeed} disabled={seeding} className="gap-2">
+              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles size={16} />}
+              Rellenar con sugeridas
+            </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gap-2"><Plus size={16} /> Nueva categoría</Button>
@@ -142,6 +164,7 @@ export default function CategoriesPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {error && !open && (

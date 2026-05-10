@@ -9,6 +9,77 @@ from srv.schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 
+SUGGESTED_EXPENSE = [
+    "Alimentación",
+    "Restaurantes y cafeterías",
+    "Transporte público",
+    "Combustible",
+    "Vehículo (mantenimiento, ITV, seguro)",
+    "Vivienda (alquiler/hipoteca)",
+    "Suministros (luz, agua, gas)",
+    "Internet y telefonía",
+    "Suscripciones (streaming, software)",
+    "Salud y farmacia",
+    "Seguros (vida, hogar, salud)",
+    "Ropa y calzado",
+    "Cuidado personal y peluquería",
+    "Ocio y entretenimiento",
+    "Viajes y vacaciones",
+    "Educación y formación",
+    "Hogar (limpieza, mobiliario)",
+    "Mascotas",
+    "Regalos y celebraciones",
+    "Caridad y donaciones",
+    "Comisiones bancarias",
+    "Impuestos (IRPF, IVA, IBI)",
+    "Inversiones (aportaciones)",
+    "Ahorro / Fondo emergencia",
+    "Imprevistos / Otros",
+]
+
+SUGGESTED_INCOME = [
+    "Nómina",
+    "Ingresos autónomo / facturación",
+    "Ingresos por alquiler",
+    "Dividendos",
+    "Intereses bancarios",
+    "Devolución de impuestos",
+    "Venta de bienes",
+    "Regalos recibidos",
+    "Reembolsos y devoluciones",
+    "Bonos / Incentivos",
+    "Otros ingresos",
+]
+
+
+@router.post("/seed", response_model=list[CategoryOut])
+def seed_categories(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    existing = {
+        c.name for c in db.query(Category)
+        .filter(Category.user_id == current_user.id).all()
+    }
+    created: list[Category] = []
+    for name in SUGGESTED_EXPENSE:
+        if name in existing:
+            continue
+        cat = Category(name=name, type="EXPENSE", user_id=current_user.id)
+        db.add(cat)
+        created.append(cat)
+    for name in SUGGESTED_INCOME:
+        if name in existing:
+            continue
+        cat = Category(name=name, type="INCOME", user_id=current_user.id)
+        db.add(cat)
+        created.append(cat)
+    db.commit()
+    for c in created:
+        db.refresh(c)
+    return created
+
+
 @router.post("/", response_model=CategoryOut)
 def create_category(
     category_in: CategoryCreate,
