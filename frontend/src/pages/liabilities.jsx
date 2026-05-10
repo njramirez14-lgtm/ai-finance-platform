@@ -15,6 +15,8 @@ import {
   Plus, Edit, Trash, Loader2, AlertCircle, Home, Building2, CreditCard, Briefcase, GraduationCap, Wallet,
 } from "lucide-react";
 import api from "@/api/axios";
+import useStore from "@/store";
+import { scopeFilter } from "@/store/slices/scope";
 
 const fmt = (n, c = "EUR") =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: c }).format(Number(n) || 0);
@@ -72,6 +74,7 @@ function monthsLeft(end_date) {
 export default function LiabilitiesPage() {
   const [items, setItems] = useState([]);
   const [entities, setEntities] = useState([]);
+  const scope = useStore((s) => s.scope);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -166,15 +169,20 @@ export default function LiabilitiesPage() {
     }
   };
 
+  const scoped = useMemo(
+    () => items.filter((it) => scopeFilter(it, scope, entities)),
+    [items, scope, entities],
+  );
+
   const totals = useMemo(() => {
     let debt = 0, monthly = 0, original = 0;
-    items.forEach((it) => {
+    scoped.forEach((it) => {
       debt += Number(it.current_balance || 0);
       original += Number(it.original_amount || 0);
       monthly += Number(it.monthly_payment || 0);
     });
     return { debt, monthly, original, paid: original - debt };
-  }, [items]);
+  }, [scoped]);
 
   const entityName = (id) => {
     if (!id) return null;
@@ -379,7 +387,7 @@ export default function LiabilitiesPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[1, 2].map((i) => <div key={i} className="h-44 rounded-lg bg-muted/50 animate-pulse" />)}
           </div>
-        ) : items.length === 0 ? (
+        ) : scoped.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center space-y-3">
               <Home className="mx-auto text-muted-foreground" size={32} />
@@ -391,7 +399,7 @@ export default function LiabilitiesPage() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {items.map((it) => {
+            {scoped.map((it) => {
               const meta = typeMeta(it.type);
               const Icon = meta.Icon;
               const pct = progress(it.original_amount, it.current_balance);

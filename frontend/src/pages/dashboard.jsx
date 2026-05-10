@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import api from "@/api/axios";
 import TicketScanDialog from "@/components/ticket-scan-dialog";
+import useStore from "@/store";
+import { scopeFilter, scopeLabel } from "@/store/slices/scope";
 
 const fmt = (n) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
@@ -25,34 +27,33 @@ const monthLabel = (key) => {
 };
 
 export default function DashboardPage() {
-  const [summary, setSummary] = useState(null);
   const [recent, setRecent] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [liabSummary, setLiabSummary] = useState(null);
+  const [liabilities, setLiabilities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [ticketOpen, setTicketOpen] = useState(false);
+  const scope = useStore((s) => s.scope);
+  const entities = useStore((s) => s.entitiesCache);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [s, r, all, acc, cat, liab] = await Promise.all([
-        api.get("/transactions/summary"),
+      const [r, all, acc, cat, liab] = await Promise.all([
         api.get("/transactions/", { params: { limit: 8 } }),
         api.get("/transactions/", { params: { limit: 500 } }),
         api.get("/accounts/").catch(() => ({ data: [] })),
         api.get("/categories/").catch(() => ({ data: [] })),
-        api.get("/liabilities/summary").catch(() => ({ data: null })),
+        api.get("/liabilities/").catch(() => ({ data: [] })),
       ]);
-      setSummary(s.data);
       setRecent(r.data);
       setTransactions(all.data);
       setAccounts(acc.data);
       setCategories(cat.data);
-      setLiabSummary(liab.data);
+      setLiabilities(liab.data || []);
     } catch (err) {
       setError(err.response?.data?.detail || "Error cargando el dashboard");
     } finally {
@@ -62,20 +63,41 @@ export default function DashboardPage() {
 
   useEffect(() => { load(); }, []);
 
-  const income = Number(summary?.income_total || 0);
-  const expense = Number(summary?.expense_total || 0);
-  const balance = Number(summary?.balance || 0);
-  const count = summary?.transaction_count || 0;
+  const scopedTransactions = useMemo(
+    () => transactions.filter((t) => scopeFilter(t, scope, entities)),
+    [transactions, scope, entities],
+  );
+  const scopedRecent = useMemo(
+    () => recent.filter((t) => scopeFilter(t, scope, entities)),
+    [recent, scope, entities],
+  );
+  const scopedAccounts = useMemo(
+    () => accounts.filter((a) => scopeFilter(a, scope, entities)),
+    [accounts, scope, entities],
+  );
+  const scopedLiabilities = useMemo(
+    () => liabilities.filter((l) => scopeFilter(l, scope, entities)),
+    [liabilities, scope, entities],
+  );
+
+  const income = scopedTransactions
+    .filter((t) => t.type === "INCOME")
+    .reduce((acc, t) => acc + Number(t.amount), 0);
+  const expense = scopedTransactions
+    .filter((t) => t.type === "EXPENSE")
+    .reduce((acc, t) => acc + Number(t.amount), 0);
+  const balance = income - expense;
+  const count = scopedTransactions.length;
   const savingsRate = income > 0 ? Math.round((balance / income) * 100) : 0;
-  const totalAccountBalance = accounts.reduce((acc, a) => acc + Number(a.balance || 0), 0);
-  const totalDebt = Number(liabSummary?.total_debt || 0);
-  const monthlyDebtPayment = Number(liabSummary?.total_monthly_payment || 0);
+  const totalAccountBalance = scopedAccounts.reduce((acc, a) => acc + Number(a.balance || 0), 0);
+  const totalDebt = scopedLiabilities.reduce((acc, l) => acc + Number(l.current_balance || 0), 0);
+  const monthlyDebtPayment = scopedLiabilities.reduce((acc, l) => acc + Number(l.monthly_payment || 0), 0);
   const netWorth = totalAccountBalance - totalDebt;
 
   // Monthly aggregation last 6 months
   const monthly = useMemo(() => {
     const map = {};
-    for (const tx of transactions) {
+    for (const tx of scopedTransactions) {
       const key = monthKey(tx.date);
       if (!map[key]) map[key] = { income: 0, expense: 0 };
       if (tx.type === "INCOME") map[key].income += Number(tx.amount);
@@ -84,14 +106,14 @@ export default function DashboardPage() {
     return Object.entries(map)
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-6);
-  }, [transactions]);
+  }, [scopedTransactions]);
 
   // Top spending categories this month
   const topCats = useMemo(() => {
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const totals = {};
-    for (const tx of transactions) {
+    for (const tx of scopedTransactions) {
       if (tx.type !== "EXPENSE") continue;
       if (!tx.date.startsWith(currentMonth)) continue;
       const key = tx.category_id || "none";
@@ -106,7 +128,7 @@ export default function DashboardPage() {
       .map(([id, amount]) => ({ id, name: catName(id), amount }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
-  }, [transactions, categories]);
+  }, [scopedTransactions, categories]);
 
   const topCatMax = topCats[0]?.amount || 0;
 
@@ -115,7 +137,14 @@ export default function DashboardPage() {
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Resumen general</h1>
+            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+              Resumen general
+              {scope && scope.kind !== "all" && (
+                <Badge variant="outline" className="text-xs font-normal">
+                  {scopeLabel(scope, entities)}
+                </Badge>
+              )}
+            </h1>
             <p className="text-sm text-muted-foreground mt-1">
               Tu situación financiera de un vistazo.
             </p>
@@ -154,12 +183,12 @@ export default function DashboardPage() {
             value={fmt(netWorth)}
             icon={<Building2 size={18} />}
             tone={netWorth >= 0 ? "slate" : "rose"}
-            hint={totalDebt > 0 ? `Activos ${fmt(totalAccountBalance)} − Deudas ${fmt(totalDebt)}` : `${accounts.length} cuenta${accounts.length === 1 ? "" : "s"}`}
+            hint={totalDebt > 0 ? `Activos ${fmt(totalAccountBalance)} − Deudas ${fmt(totalDebt)}` : `${scopedAccounts.length} cuenta${scopedAccounts.length === 1 ? "" : "s"}`}
             loading={loading}
           />
         </div>
 
-        {(totalDebt > 0 || (liabSummary?.count || 0) > 0) && (
+        {(totalDebt > 0 || scopedLiabilities.length > 0) && (
           <Card className="border-rose-500/20 bg-rose-500/5">
             <CardContent className="py-4 flex items-center gap-4 flex-wrap">
               <div className="p-2 rounded-md bg-rose-500/15 text-rose-400">
@@ -261,7 +290,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Account balances */}
-        {accounts.length > 0 && (
+        {scopedAccounts.length > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
@@ -274,7 +303,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {accounts.slice(0, 6).map((a) => (
+                {scopedAccounts.slice(0, 6).map((a) => (
                   <div key={a.id} className="p-3 rounded-lg border border-border bg-card/50">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium truncate">{a.name}</span>
@@ -304,7 +333,7 @@ export default function DashboardPage() {
               <div className="space-y-2 animate-pulse">
                 {[1, 2, 3, 4].map((i) => <div key={i} className="h-10 rounded bg-muted/50" />)}
               </div>
-            ) : recent.length === 0 ? (
+            ) : scopedRecent.length === 0 ? (
               <div className="py-12 text-center space-y-3">
                 <p className="text-sm text-muted-foreground">Aún no hay transacciones.</p>
                 <div className="flex gap-2 justify-center">
@@ -325,7 +354,7 @@ export default function DashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recent.map((tx) => (
+                  {scopedRecent.map((tx) => (
                     <TableRow key={tx.id}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{tx.date}</TableCell>
                       <TableCell className="font-medium">{tx.description || "—"}</TableCell>
@@ -355,7 +384,7 @@ export default function DashboardPage() {
       <TicketScanDialog
         open={ticketOpen}
         onOpenChange={setTicketOpen}
-        accounts={accounts}
+        accounts={scopedAccounts}
         categories={categories}
         onSaved={load}
       />

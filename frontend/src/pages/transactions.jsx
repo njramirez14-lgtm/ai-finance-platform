@@ -19,6 +19,8 @@ import {
   Plus, Edit, Trash, Loader2, AlertCircle, Receipt, UploadCloud, FileText, CheckCircle2,
 } from "lucide-react";
 import api from "@/api/axios";
+import useStore from "@/store";
+import { scopeFilter, scopeLabel } from "@/store/slices/scope";
 
 const fmt = (n) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
@@ -48,7 +50,7 @@ export default function TransactionsPage() {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState("ALL");
-  const [entityFilter, setEntityFilter] = useState("ALL");
+  const scope = useStore((s) => s.scope);
 
   const load = async () => {
     setLoading(true);
@@ -134,25 +136,23 @@ export default function TransactionsPage() {
     }
   };
 
+  const scoped = useMemo(
+    () => transactions.filter((t) => scopeFilter(t, scope, entities)),
+    [transactions, scope, entities],
+  );
+
   const filtered = useMemo(() => {
-    return transactions.filter((t) => {
-      if (filter !== "ALL" && t.type !== filter) return false;
-      if (entityFilter !== "ALL") {
-        if (entityFilter === "NONE") return !t.entity_id;
-        if (String(t.entity_id) !== entityFilter) return false;
-      }
-      return true;
-    });
-  }, [transactions, filter, entityFilter]);
+    return scoped.filter((t) => filter === "ALL" || t.type === filter);
+  }, [scoped, filter]);
 
   const totals = useMemo(() => {
     let inc = 0, exp = 0;
-    transactions.forEach((t) => {
+    scoped.forEach((t) => {
       if (t.type === "INCOME") inc += Number(t.amount);
       else exp += Number(t.amount);
     });
     return { inc, exp, balance: inc - exp };
-  }, [transactions]);
+  }, [scoped]);
 
   const catName = (id) => {
     if (!id) return "—";
@@ -322,21 +322,10 @@ export default function TransactionsPage() {
               <FilterChip active={filter === "ALL"} onClick={() => setFilter("ALL")}>Todas</FilterChip>
               <FilterChip active={filter === "INCOME"} onClick={() => setFilter("INCOME")}>Ingresos</FilterChip>
               <FilterChip active={filter === "EXPENSE"} onClick={() => setFilter("EXPENSE")}>Gastos</FilterChip>
-              {entities.length > 0 && (
-                <>
-                  <span className="text-xs text-muted-foreground mx-2">|</span>
-                  <FilterChip active={entityFilter === "ALL"} onClick={() => setEntityFilter("ALL")}>Todas entidades</FilterChip>
-                  {entities.map((e) => (
-                    <FilterChip
-                      key={e.id}
-                      active={entityFilter === String(e.id)}
-                      onClick={() => setEntityFilter(String(e.id))}
-                    >
-                      {e.name}
-                    </FilterChip>
-                  ))}
-                  <FilterChip active={entityFilter === "NONE"} onClick={() => setEntityFilter("NONE")}>Sin entidad</FilterChip>
-                </>
+              {scope && scope.kind !== "all" && (
+                <Badge variant="outline" className="ml-2 text-xs">
+                  Vista: {scopeLabel(scope, entities)}
+                </Badge>
               )}
               <span className="ml-auto text-xs text-muted-foreground">
                 {filtered.length} {filtered.length === 1 ? "resultado" : "resultados"}

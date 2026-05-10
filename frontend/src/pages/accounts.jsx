@@ -15,6 +15,8 @@ import {
   Plus, Edit, Trash, Loader2, AlertCircle, Wallet, Banknote, CreditCard, PiggyBank, Bitcoin, Building2,
 } from "lucide-react";
 import api from "@/api/axios";
+import useStore from "@/store";
+import { scopeFilter, scopeLabel } from "@/store/slices/scope";
 
 const fmt = (n, currency = "EUR") =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(Number(n) || 0);
@@ -41,6 +43,7 @@ const emptyForm = () => ({
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([]);
   const [entities, setEntities] = useState([]);
+  const scope = useStore((s) => s.scope);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -121,7 +124,8 @@ export default function AccountsPage() {
     }
   };
 
-  const totalBalance = accounts.reduce((acc, a) => acc + Number(a.balance || 0), 0);
+  const scopedAccounts = accounts.filter((a) => scopeFilter(a, scope, entities));
+  const totalBalance = scopedAccounts.reduce((acc, a) => acc + Number(a.balance || 0), 0);
   const entityName = (id) => {
     if (!id) return null;
     const e = entities.find((x) => x.id === id);
@@ -248,7 +252,7 @@ export default function AccountsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[1, 2, 3, 4].map((i) => <div key={i} className="h-32 rounded-lg bg-muted/50 animate-pulse" />)}
           </div>
-        ) : accounts.length === 0 ? (
+        ) : scopedAccounts.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center space-y-3">
               <Wallet className="mx-auto text-muted-foreground" size={32} />
@@ -260,7 +264,7 @@ export default function AccountsPage() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {accounts.map((acc) => {
+            {scopedAccounts.map((acc) => {
               const meta = typeMeta(acc.type);
               const Icon = meta.Icon;
               const ent = entityName(acc.entity_id);

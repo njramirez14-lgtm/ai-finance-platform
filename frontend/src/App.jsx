@@ -24,9 +24,11 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 function App() {
   const rehydrateAuth = useStore((state) => state.rehydrateAuth);
+  const rehydrateScope = useStore((state) => state.rehydrateScope);
 
   useEffect(() => {
     rehydrateAuth();
+    rehydrateScope();
   }, []);
 
   return (
