@@ -12,21 +12,35 @@ import { Label } from "@/components/ui/label";
 import { useState } from "react";
 import useStore from "@/store";
 import { useNavigate } from "react-router-dom";
+import { Loader2, AlertCircle } from "lucide-react";
 
 export function SignupForm({ className, ...props }) {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
   const signup = useStore((state) => state.signup);
   const navigate = useNavigate();
 
   const handleSignup = async (e) => {
     e.preventDefault();
+    setError(null);
+    setLoading(true);
     try {
       await signup({ username, email, password });
       navigate("/dashboard");
     } catch (err) {
       console.error("Signup failed:", err);
+      const detail = err?.detail;
+      let msg = "Error al crear cuenta";
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail) && detail[0]?.msg) msg = detail[0].msg;
+      else if (typeof err === "string") msg = err;
+      else if (err?.message) msg = err.message;
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -82,8 +96,18 @@ export function SignupForm({ className, ...props }) {
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
-                <Button type="submit" className="w-full">
-                  Sign up
+                {error && (
+                  <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando cuenta…</>
+                  ) : (
+                    "Sign up"
+                  )}
                 </Button>
               </div>
               <div className="text-center text-sm">

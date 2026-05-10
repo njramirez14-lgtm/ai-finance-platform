@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Loader2, AlertCircle } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 export function LoginForm({ className, ...props }) {
@@ -18,16 +19,30 @@ export function LoginForm({ className, ...props }) {
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
   const login = useStore((state) => state.login);
   const from = location.state?.from?.pathname || "/dashboard";
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setError(null);
+    setLoading(true);
     try {
       await login({ email, password });
-      navigate(from, { replace: true }); // go back to where user wanted to go
+      navigate(from, { replace: true });
     } catch (err) {
       console.error("Login failed:", err);
+      const detail = err?.detail;
+      let msg = "Error al iniciar sesión";
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail) && detail[0]?.msg) msg = detail[0].msg;
+      else if (typeof err === "string") msg = err;
+      else if (err?.message) msg = err.message;
+      if (msg === "Invalid email or password") msg = "Email o contraseña incorrectos";
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -72,8 +87,18 @@ export function LoginForm({ className, ...props }) {
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
-                <Button type="submit" className="w-full">
-                  Login
+                {error && (
+                  <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Iniciando sesión…</>
+                  ) : (
+                    "Login"
+                  )}
                 </Button>
               </div>
               <div className="text-center text-sm">

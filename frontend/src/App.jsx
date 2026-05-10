@@ -9,6 +9,15 @@ import SettingsPage from "./pages/settings";
 import DashboardPage from "./pages/dashboard";
 import TransactionsPage from "./pages/transactions";
 import CategoriesPage from "./pages/categories/categories";
+import AccountsPage from "./pages/accounts";
+import EntitiesPage from "./pages/entities";
+import AdvisorPage from "./pages/advisor";
+import MarketsPage from "./pages/markets";
+import LiabilitiesPage from "./pages/liabilities";
+import CardsPage from "./pages/cards";
+import SubscriptionsPage from "./pages/subscriptions";
+import BacktestPage from "./pages/backtest";
+import StrategyPage from "./pages/strategy";
 import ProtectedRoute from "./components/protected-routes";
 import { ThemeProvider } from "./components/theme-provider";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -58,6 +67,78 @@ function App() {
             element={
               <ProtectedRoute>
                 <CategoriesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/accounts"
+            element={
+              <ProtectedRoute>
+                <AccountsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/entities"
+            element={
+              <ProtectedRoute>
+                <EntitiesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/advisor"
+            element={
+              <ProtectedRoute>
+                <AdvisorPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/markets"
+            element={
+              <ProtectedRoute>
+                <MarketsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/liabilities"
+            element={
+              <ProtectedRoute>
+                <LiabilitiesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cards"
+            element={
+              <ProtectedRoute>
+                <CardsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/subscriptions"
+            element={
+              <ProtectedRoute>
+                <SubscriptionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/backtest"
+            element={
+              <ProtectedRoute>
+                <BacktestPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/strategy"
+            element={
+              <ProtectedRoute>
+                <StrategyPage />
               </ProtectedRoute>
             }
           />

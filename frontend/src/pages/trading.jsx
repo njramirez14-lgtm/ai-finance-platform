@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Brain, ShieldAlert, Zap, MessageSquare, ShieldCheck, Play, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import api from "@/api/axios";
 
 export default function TradingPage() {
   const [symbol, setSymbol] = useState("BTC");
@@ -16,10 +17,7 @@ export default function TradingPage() {
     setLoading(true);
     setExecutionStatus(null);
     try {
-      const response = await fetch(`http://localhost:8000/ai/trade-committee?symbol=${symbol}`, {
-        method: "POST"
-      });
-      const data = await response.json();
+      const { data } = await api.post(`/ai/trade-committee?symbol=${symbol}`);
       setDebate(data.debate);
     } catch (error) {
       console.error("Debate failed:", error);
@@ -31,10 +29,7 @@ export default function TradingPage() {
   const handleExecute = async (dryRun = true) => {
     setExecuting(true);
     try {
-      const response = await fetch(`http://localhost:8000/ai/execute-trade?symbol=${symbol}&amount_eur=100&dry_run=${dryRun}`, {
-        method: "POST"
-      });
-      const data = await response.json();
+      const { data } = await api.post(`/ai/execute-trade?symbol=${symbol}&amount_eur=100&dry_run=${dryRun}`);
       setExecutionStatus(data);
     } catch (error) {
       console.error("Execution failed:", error);

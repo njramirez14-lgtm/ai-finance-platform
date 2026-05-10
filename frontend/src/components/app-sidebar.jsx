@@ -1,21 +1,24 @@
 import * as React from "react";
 import {
-  AudioWaveform,
-  Command,
-  Frame,
-  GalleryVerticalEnd,
-  Map,
   LucideLayoutDashboard,
   PieChart,
   Settings2,
   Table2Icon,
   Layers,
-  TrendingUp,
+  Wallet,
+  Building2,
+  Sparkles,
+  LineChart,
+  Home,
+  CreditCard,
+  Repeat,
+  FlaskConical,
+  Target,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavUser } from "@/components/nav-user";
-import { TeamSwitcher } from "@/components/team-switcher";
+import { EntitySwitcher } from "@/components/entity-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -34,23 +37,6 @@ export function AppSidebar({ ...props }) {
       email: user ? user.email : null,
       avatar: "/avatars/shadcn.jpg",
     },
-    teams: [
-      {
-        name: "Uvolve AI",
-        logo: GalleryVerticalEnd,
-        plan: "Enterprise",
-      },
-      {
-        name: "Morningside AI",
-        logo: AudioWaveform,
-        plan: "Startup",
-      },
-      {
-        name: "Integraticus",
-        logo: Command,
-        plan: "Free",
-      },
-    ],
     navMain: [
       {
         title: "Dashboard",
@@ -59,46 +45,69 @@ export function AppSidebar({ ...props }) {
         isActive: true,
       },
       {
-        title: "Transactions",
+        title: "Transacciones",
         url: "/transactions",
         icon: Table2Icon,
       },
       {
-        title: "Reports",
-        url: "/reports",
-        icon: PieChart,
+        title: "Cuentas",
+        url: "/accounts",
+        icon: Wallet,
       },
       {
-        title: "Categories",
+        title: "Tarjetas",
+        url: "/cards",
+        icon: CreditCard,
+      },
+      {
+        title: "Suscripciones",
+        url: "/subscriptions",
+        icon: Repeat,
+      },
+      {
+        title: "Deudas",
+        url: "/liabilities",
+        icon: Home,
+      },
+      {
+        title: "Entidades",
+        url: "/entities",
+        icon: Building2,
+      },
+      {
+        title: "Categorías",
         url: "/categories",
         icon: Layers,
       },
       {
-        title: "Trading",
-        url: "/trading",
-        icon: TrendingUp,
+        title: "Mercados",
+        url: "/markets",
+        icon: LineChart,
       },
       {
-        title: "Settings",
-        url: "/settings",
-        icon: Settings2,
-      },
-    ],
-    projects: [
-      {
-        name: "Design Engineering",
-        url: "#",
-        icon: Frame,
+        title: "Backtest",
+        url: "/backtest",
+        icon: FlaskConical,
       },
       {
-        name: "Sales & Marketing",
-        url: "#",
+        title: "Mi estrategia",
+        url: "/strategy",
+        icon: Target,
+      },
+      {
+        title: "Asesor IA",
+        url: "/advisor",
+        icon: Sparkles,
+      },
+      {
+        title: "Informes",
+        url: "/reports",
         icon: PieChart,
       },
       {
-        name: "Travel",
-        url: "#",
-        icon: Map,
+        title: "Ajustes",
+        url: "/settings",
+        icon: Settings2,
       },
     ],
   };
@@ -106,11 +115,10 @@ export function AppSidebar({ ...props }) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <TeamSwitcher teams={data.teams} />
+        <EntitySwitcher />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        {/* <NavProjects projects={data.projects} /> */}
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
