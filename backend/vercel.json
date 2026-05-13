@@ -1,9 +1,0 @@
-{
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
-  ],
-  "crons": [
-    { "path": "/strategy/cron/daily", "schedule": "0 8 * * *" },
-    { "path": "/smart-money/cron/daily", "schedule": "30 8 * * *" }
-  ]
-}

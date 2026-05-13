@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from srv.core.config import settings
@@ -12,10 +12,6 @@ app = FastAPI(
     debug=settings.debug,
 )
 
-# Allowed origins:
-# - localhost dev (5173 Vite default, 3000 alternative)
-# - production frontend on Vercel
-# - any *.vercel.app preview deployment of this project
 default_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -38,29 +34,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# register routers
-app.include_router(auth.router)
-app.include_router(category.router)
-app.include_router(transaction.router)
-app.include_router(entity.router)
-app.include_router(account.router)
-app.include_router(card.router)
-app.include_router(subscription.router)
-app.include_router(liability.router)
-app.include_router(markets.router)
-app.include_router(smart_money.router)
-app.include_router(backtest.router)
-app.include_router(telegram.router)
-app.include_router(ai.router)
-app.include_router(strategy.router)
-app.include_router(strategy_cron.router)
+api = APIRouter(prefix="/api")
+api.include_router(auth.router)
+api.include_router(category.router)
+api.include_router(transaction.router)
+api.include_router(entity.router)
+api.include_router(account.router)
+api.include_router(card.router)
+api.include_router(subscription.router)
+api.include_router(liability.router)
+api.include_router(markets.router)
+api.include_router(smart_money.router)
+api.include_router(backtest.router)
+api.include_router(telegram.router)
+api.include_router(ai.router)
+api.include_router(strategy.router)
+api.include_router(strategy_cron.router)
+app.include_router(api)
 
 
-@app.get("/")
-def root():
+@app.get("/api")
+def api_root():
     return {"status": "ok", "service": "ai-finance-backend", "version": "0.1.0"}
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok"}

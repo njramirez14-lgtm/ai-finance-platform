@@ -1,0 +1,12 @@
+{
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "echo skip",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" }
+  ],
+  "crons": [
+    { "path": "/api/strategy/cron/daily", "schedule": "0 8 * * *" },
+    { "path": "/api/smart-money/cron/daily", "schedule": "30 8 * * *" }
+  ]
+}
