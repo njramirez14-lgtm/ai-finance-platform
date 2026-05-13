@@ -7,22 +7,22 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from app.database.database import Base
-from app.models import *
 
-load_dotenv()
-
-# Ensure app/ is on sys.path
+# Ensure backend/ (which contains srv/) is on sys.path BEFORE importing srv
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import Base + models
+from srv.database.database import Base  # noqa: E402
+from srv.models import *  # noqa: E402,F401,F403
+
+load_dotenv()
 
 # Alembic Config object
 config = context.config
 
-# If config.ini has no sqlalchemy.url, pull from .env
-if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL"))
+# Prefer DATABASE_URL from environment / .env over the value baked into alembic.ini
+env_db_url = os.getenv("DATABASE_URL")
+if env_db_url:
+    config.set_main_option("sqlalchemy.url", env_db_url)
 
 # Logging
 if config.config_file_name is not None:

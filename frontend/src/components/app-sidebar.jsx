@@ -14,6 +14,7 @@ import {
   Repeat,
   FlaskConical,
   Target,
+  Crown,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -83,6 +84,11 @@ export function AppSidebar({ ...props }) {
         title: "Mercados",
         url: "/markets",
         icon: LineChart,
+      },
+      {
+        title: "Smart Money",
+        url: "/smart-money",
+        icon: Crown,
       },
       {
         title: "Backtest",

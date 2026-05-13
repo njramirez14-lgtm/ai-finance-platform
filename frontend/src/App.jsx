@@ -13,6 +13,7 @@ import AccountsPage from "./pages/accounts";
 import EntitiesPage from "./pages/entities";
 import AdvisorPage from "./pages/advisor";
 import MarketsPage from "./pages/markets";
+import SmartMoneyPage from "./pages/smart-money";
 import LiabilitiesPage from "./pages/liabilities";
 import CardsPage from "./pages/cards";
 import SubscriptionsPage from "./pages/subscriptions";
@@ -101,6 +102,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <MarketsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/smart-money"
+            element={
+              <ProtectedRoute>
+                <SmartMoneyPage />
               </ProtectedRoute>
             }
           />
