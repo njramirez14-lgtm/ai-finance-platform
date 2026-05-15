@@ -1,7 +1,7 @@
 from datetime import date as date_type
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -227,3 +227,25 @@ def delete_transaction(
     db.delete(tx)
     db.commit()
     return None
+
+
+@router.post("/bulk-delete")
+def bulk_delete_transactions(
+    ids: list[int] = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Delete many transactions in one request. Only deletes ones owned
+    by the current user; silently ignores foreign IDs."""
+    if not ids:
+        return {"deleted": 0}
+    deleted = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.id.in_(ids),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": deleted}

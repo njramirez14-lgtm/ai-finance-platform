@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Receipt, UploadCloud, FileText, CheckCircle2,
-  Search, X, Wallet, Tag,
+  Search, X, Wallet, Tag, Trash2, CheckSquare, Square,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -81,6 +81,20 @@ export default function TransactionsPage() {
   const [filterAccount, setFilterAccount] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [groupByMonth, setGroupByMonth] = useState(false);
+
+  // Multi-select
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelected = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
 
   const scope = useStore((s) => s.scope);
 
@@ -162,9 +176,27 @@ export default function TransactionsPage() {
     if (!window.confirm(`¿Borrar la transacción "${tx.description || tx.amount + "€"}"?`)) return;
     try {
       await api.delete(`/transactions/${tx.id}`);
+      setSelected((prev) => {
+        const next = new Set(prev); next.delete(tx.id); return next;
+      });
       await load();
     } catch (err) {
       setError(err.response?.data?.detail || "Error borrando");
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`¿Borrar ${selected.size} transacciones? Esta acción no se puede deshacer.`)) return;
+    setBulkBusy(true);
+    try {
+      await api.post("/transactions/bulk-delete", { ids: Array.from(selected) });
+      clearSelection();
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Error borrando en bloque");
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -446,7 +478,18 @@ export default function TransactionsPage() {
                 </CardContent>
               </Card>
             ) : (
-              grouped.map(([key, rows]) => (
+              grouped.map(([key, rows]) => {
+                const allChecked = rows.length > 0 && rows.every((r) => selected.has(r.id));
+                const someChecked = rows.some((r) => selected.has(r.id));
+                const toggleGroup = () => {
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (allChecked) rows.forEach((r) => next.delete(r.id));
+                    else rows.forEach((r) => next.add(r.id));
+                    return next;
+                  });
+                };
+                return (
                 <Card key={key}>
                   {groupByMonth && (
                     <CardHeader className="pb-2">
@@ -459,19 +502,39 @@ export default function TransactionsPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-10">
+                            <button
+                              type="button"
+                              onClick={toggleGroup}
+                              className={`p-0.5 rounded hover:bg-muted ${someChecked && !allChecked ? "text-indigo-400" : ""}`}
+                              title={allChecked ? "Deseleccionar todo" : "Seleccionar todo"}
+                            >
+                              {allChecked ? <CheckSquare size={14} className="text-indigo-400" /> : <Square size={14} className="text-muted-foreground" />}
+                            </button>
+                          </TableHead>
                           <TableHead className="w-24">Fecha</TableHead>
                           <TableHead>Descripción</TableHead>
                           <TableHead className="w-32">Categoría</TableHead>
                           <TableHead className="w-32">Cuenta</TableHead>
                           <TableHead className="text-right w-28">Monto</TableHead>
-                          <TableHead className="w-20"></TableHead>
+                          <TableHead className="w-16 text-right">Acción</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {rows.map((tx) => {
                           const acc = accountName(tx.account_id);
+                          const isSelected = selected.has(tx.id);
                           return (
-                            <TableRow key={tx.id} className="cursor-pointer hover:bg-muted/40" onClick={() => openEdit(tx)}>
+                            <TableRow
+                              key={tx.id}
+                              className={`group cursor-pointer hover:bg-muted/40 ${isSelected ? "bg-indigo-500/5" : ""}`}
+                              onClick={() => openEdit(tx)}
+                            >
+                              <TableCell onClick={(e) => { e.stopPropagation(); toggleSelected(tx.id); }} className="cursor-pointer">
+                                {isSelected
+                                  ? <CheckSquare size={14} className="text-indigo-400" />
+                                  : <Square size={14} className="text-muted-foreground/60 group-hover:text-muted-foreground" />}
+                              </TableCell>
                               <TableCell className="font-mono text-xs text-muted-foreground">{(tx.date || "").slice(0, 10)}</TableCell>
                               <TableCell className="font-medium">{tx.description || "—"}</TableCell>
                               <TableCell>
@@ -498,9 +561,14 @@ export default function TransactionsPage() {
                                 {tx.type === "INCOME" ? "+" : "-"}{fmt(tx.amount).replace(/^-/, "")}
                               </TableCell>
                               <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="sm" onClick={() => handleDelete(tx)} title="Borrar">
-                                  <Trash size={14} />
-                                </Button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(tx)}
+                                  className="p-1.5 rounded hover:bg-rose-500/10 text-rose-400/70 hover:text-rose-400 transition-colors"
+                                  title="Borrar"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
                               </TableCell>
                             </TableRow>
                           );
@@ -509,7 +577,7 @@ export default function TransactionsPage() {
                     </Table>
                   </CardContent>
                 </Card>
-              ))
+              );})
             )}
           </TabsContent>
 
@@ -518,6 +586,29 @@ export default function TransactionsPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Floating bulk action bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-full bg-background border border-border shadow-2xl">
+          <span className="text-sm font-medium">
+            {selected.size} {selected.size === 1 ? "seleccionada" : "seleccionadas"}
+          </span>
+          <Button size="sm" variant="outline" onClick={clearSelection}>
+            Deseleccionar
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={bulkDelete}
+            disabled={bulkBusy}
+            className="gap-1.5"
+          >
+            {bulkBusy
+              ? <><Loader2 size={14} className="animate-spin" /> Borrando…</>
+              : <><Trash2 size={14} /> Borrar {selected.size}</>}
+          </Button>
+        </div>
+      )}
     </Layout>
   );
 }
