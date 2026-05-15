@@ -13,6 +13,7 @@ from srv.models.account import Account
 from srv.models.card import Card
 from srv.models.category import Category
 from srv.models.entity import Entity
+from srv.models.subscription import Subscription
 from srv.models.transaction import Transaction, TransactionType
 from srv.schemas.account import (
     AccountCreate,
@@ -192,6 +193,20 @@ def delete_account(
     current_user=Depends(get_current_user),
 ):
     account = _get_owned_account(db, account_id, current_user.id)
+    # Detach references so the FK does not block deletion. The transactions
+    # and cards remain — just unlinked from this account, as the UI promises.
+    db.query(Transaction).filter(
+        Transaction.user_id == current_user.id,
+        Transaction.account_id == account.id,
+    ).update({Transaction.account_id: None}, synchronize_session=False)
+    db.query(Card).filter(
+        Card.user_id == current_user.id,
+        Card.account_id == account.id,
+    ).update({Card.account_id: None}, synchronize_session=False)
+    db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.account_id == account.id,
+    ).update({Subscription.account_id: None}, synchronize_session=False)
     db.delete(account)
     db.commit()
     return None
