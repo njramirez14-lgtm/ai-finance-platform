@@ -300,6 +300,12 @@ Texto:
         response = model.generate_content(prompt)
         raw = (response.text or "").strip()
     except Exception as exc:
+        msg = str(exc)
+        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+            raise HTTPException(
+                status_code=429,
+                detail="Has agotado la cuota gratuita de Gemini. Espera unos minutos o usa una API key de pago.",
+            )
         raise HTTPException(status_code=502, detail=f"Error consultando el modelo: {exc}")
 
     cleaned = raw.replace("```json", "").replace("```", "").strip()
@@ -329,12 +335,16 @@ Texto:
         cat = cat_index.get(key)
         if cat:
             return cat.id
+        # Use a savepoint so a unique-constraint violation here doesn't
+        # roll back previously inserted transactions in this batch.
+        sp = db.begin_nested()
         cat = Category(name=clean, type=tx_type, user_id=current_user.id)
         db.add(cat)
         try:
             db.flush()
+            sp.commit()
         except Exception:
-            db.rollback()
+            sp.rollback()
             existing = (
                 db.query(Category)
                 .filter(

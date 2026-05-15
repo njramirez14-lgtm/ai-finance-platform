@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Wallet, Banknote, CreditCard, PiggyBank, Bitcoin, Building2,
-  Eye, EyeOff, Copy, Check, Upload, Sliders, FileText, TrendingUp, TrendingDown,
+  Eye, EyeOff, Copy, Check, Upload, Sliders, FileText, TrendingUp, TrendingDown, X,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -379,7 +379,10 @@ export default function AccountsPage() {
         {error && !open && (
           <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
             <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-            <span>{error}</span>
+            <span className="flex-1">{error}</span>
+            <button type="button" onClick={() => setError(null)} className="hover:text-rose-300" title="Descartar">
+              <X size={14} />
+            </button>
           </div>
         )}
 
