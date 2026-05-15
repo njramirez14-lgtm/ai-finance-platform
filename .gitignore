@@ -36,3 +36,6 @@ pnpm-debug.log*
 finance.db
 *.sqlite
 *.sqlite3
+
+.vercel
+.env*.local
