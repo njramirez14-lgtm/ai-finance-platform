@@ -551,11 +551,53 @@ export default function AccountsPage() {
               </div>
             )}
             {uploadResult && uploadResult.success && (
-              <div className="space-y-2 p-3 rounded-md text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <div className="space-y-3 p-3 rounded-md text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <div className="flex items-start gap-2">
                   <Check size={16} className="flex-shrink-0 mt-0.5" />
                   <span>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</span>
                 </div>
+
+                {(uploadResult.income_total > 0 || uploadResult.expense_total > 0) && (
+                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-emerald-500/20 text-xs">
+                    <div>
+                      <div className="text-emerald-300/70 uppercase tracking-wider text-[10px]">Ingresos</div>
+                      <div className="font-mono font-semibold">{fmt(uploadResult.income_total)}</div>
+                      <div className="text-emerald-300/60 text-[10px]">{uploadResult.by_type?.INCOME ?? 0} mov.</div>
+                    </div>
+                    <div>
+                      <div className="text-rose-300/70 uppercase tracking-wider text-[10px]">Gastos</div>
+                      <div className="font-mono font-semibold text-rose-300">-{fmt(uploadResult.expense_total)}</div>
+                      <div className="text-rose-300/60 text-[10px]">{uploadResult.by_type?.EXPENSE ?? 0} mov.</div>
+                    </div>
+                    <div>
+                      <div className="text-emerald-300/70 uppercase tracking-wider text-[10px]">Neto</div>
+                      <div className="font-mono font-semibold">{fmt((uploadResult.income_total || 0) - (uploadResult.expense_total || 0))}</div>
+                    </div>
+                  </div>
+                )}
+
+                {uploadResult.by_month && Object.keys(uploadResult.by_month).length > 0 && (
+                  <div className="pt-2 border-t border-emerald-500/20 space-y-1.5">
+                    <div className="text-xs text-emerald-300/80 font-medium">Por mes:</div>
+                    <div className="space-y-1">
+                      {Object.entries(uploadResult.by_month).map(([mes, info]) => {
+                        const net = (info.income || 0) - (info.expense || 0);
+                        return (
+                          <div key={mes} className="flex items-center gap-2 text-xs">
+                            <span className="font-mono w-16 text-emerald-300/80">{mes}</span>
+                            <span className="text-emerald-300/60 w-12">{info.count} mov.</span>
+                            <span className="text-emerald-400">+{fmt(info.income)}</span>
+                            <span className="text-rose-400">-{fmt(info.expense)}</span>
+                            <span className={`ml-auto font-mono font-semibold ${net >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              = {fmt(net)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {uploadResult.by_category && Object.keys(uploadResult.by_category).length > 0 && (
                   <div className="pt-2 border-t border-emerald-500/20 space-y-1">
                     <div className="text-xs text-emerald-300/80 font-medium">Por categoría:</div>

@@ -245,8 +245,10 @@ async def upload_statement(
         raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 5 MB)")
 
     text_content = content.decode("utf-8", errors="ignore")
-    if len(text_content) > 12000:
-        text_content = text_content[:12000]
+    # Gemini Flash supports ~1M tokens input. 200k chars ≈ 50k tokens, plenty
+    # of headroom for a full year of typical bank statements.
+    if len(text_content) > 200000:
+        text_content = text_content[:200000]
 
     import google.generativeai as genai
 
@@ -296,7 +298,14 @@ Texto:
 """
 
     try:
-        model = genai.GenerativeModel("gemini-flash-latest")
+        model = genai.GenerativeModel(
+            "gemini-flash-latest",
+            generation_config={
+                "temperature": 0.1,
+                "max_output_tokens": 65536,
+                "response_mime_type": "application/json",
+            },
+        )
         response = model.generate_content(prompt)
         raw = (response.text or "").strip()
     except Exception as exc:
@@ -362,6 +371,10 @@ Texto:
 
     created = 0
     by_category: dict[str, int] = {}
+    by_month: dict[str, dict] = {}
+    by_type = {"INCOME": 0, "EXPENSE": 0}
+    income_total = 0.0
+    expense_total = 0.0
     for item in parsed:
         if not isinstance(item, dict):
             continue
@@ -401,11 +414,28 @@ Texto:
         created += 1
         if cat_name:
             by_category[cat_name] = by_category.get(cat_name, 0) + 1
+        if tx_type == TransactionType.INCOME:
+            by_type["INCOME"] += 1
+            income_total += amount
+        else:
+            by_type["EXPENSE"] += 1
+            expense_total += amount
+        month_key = tx_date.strftime("%Y-%m")
+        bucket = by_month.setdefault(month_key, {"count": 0, "income": 0.0, "expense": 0.0})
+        bucket["count"] += 1
+        if tx_type == TransactionType.INCOME:
+            bucket["income"] += amount
+        else:
+            bucket["expense"] += amount
     db.commit()
     db.refresh(account)
     return {
         "success": True,
         "imported": created,
         "by_category": by_category,
+        "by_type": by_type,
+        "by_month": dict(sorted(by_month.items(), reverse=True)),
+        "income_total": round(income_total, 2),
+        "expense_total": round(expense_total, 2),
         "account": _to_out(db, account),
     }
