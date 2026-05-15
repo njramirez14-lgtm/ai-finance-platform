@@ -12,7 +12,7 @@ import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit, Trash, Loader2, AlertCircle, Home, Building2, CreditCard, Briefcase, GraduationCap, Wallet,
+  Plus, Edit, Trash, Loader2, AlertCircle, Home, Building2, CreditCard, Briefcase, GraduationCap, Wallet, BanknoteArrowDown,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -74,6 +74,7 @@ function monthsLeft(end_date) {
 export default function LiabilitiesPage() {
   const [items, setItems] = useState([]);
   const [entities, setEntities] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const scope = useStore((s) => s.scope);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -82,20 +83,55 @@ export default function LiabilitiesPage() {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
 
+  // Payment dialog
+  const [payOpen, setPayOpen] = useState(false);
+  const [payTarget, setPayTarget] = useState(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payAccount, setPayAccount] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [a, b] = await Promise.all([
+      const [a, b, c] = await Promise.all([
         api.get("/liabilities/"),
         api.get("/entities/").catch(() => ({ data: [] })),
+        api.get("/accounts/").catch(() => ({ data: [] })),
       ]);
       setItems(a.data);
       setEntities(b.data);
+      setAccounts(c.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Error cargando deudas");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openPayment = (it) => {
+    setPayTarget(it);
+    setPayAmount(it.monthly_payment ? String(it.monthly_payment) : "");
+    setPayAccount("");
+    setPayOpen(true);
+  };
+
+  const submitPayment = async () => {
+    if (!payTarget) return;
+    const amt = parseFloat(payAmount);
+    if (!amt || amt <= 0) { setError("Importe inválido"); return; }
+    setPayBusy(true);
+    try {
+      await api.post(`/liabilities/${payTarget.id}/pay`, {
+        amount: amt,
+        account_id: payAccount ? parseInt(payAccount, 10) : null,
+      });
+      setPayOpen(false);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Error registrando pago");
+    } finally {
+      setPayBusy(false);
     }
   };
 
@@ -436,6 +472,15 @@ export default function LiabilitiesPage() {
                       <div className="text-2xl font-bold tabular-nums">{fmt(it.current_balance, it.currency)}</div>
                       <div className="text-xs text-muted-foreground">de {fmt(it.original_amount, it.currency)}</div>
                     </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full gap-1.5"
+                      onClick={() => openPayment(it)}
+                      disabled={Number(it.current_balance || 0) <= 0}
+                    >
+                      <BanknoteArrowDown size={14} /> Registrar pago
+                    </Button>
 
                     {it.original_amount > 0 && (
                       <div>
@@ -470,6 +515,58 @@ export default function LiabilitiesPage() {
           </div>
         )}
       </div>
+
+      {/* Payment dialog */}
+      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Registrar pago</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {payTarget && (
+              <div className="p-3 rounded-md bg-muted/50 text-sm">
+                <div className="font-medium">{payTarget.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  Saldo actual: <span className="font-mono">{fmt(payTarget.current_balance, payTarget.currency)}</span>
+                  {payTarget.monthly_payment && (
+                    <> · Cuota: <span className="font-mono">{fmt(payTarget.monthly_payment, payTarget.currency)}</span></>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Importe del pago</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Cuenta de pago (opcional)</Label>
+              <Select value={payAccount || "none"} onValueChange={(v) => setPayAccount(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Sin cuenta — solo reduce el saldo" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Solo reduce saldo</SelectItem>
+                  {accounts.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Si eliges cuenta, se creará automáticamente la transacción de gasto.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPayOpen(false)}>Cancelar</Button>
+            <Button onClick={submitPayment} disabled={payBusy}>
+              {payBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Registrando…</> : "Registrar pago"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

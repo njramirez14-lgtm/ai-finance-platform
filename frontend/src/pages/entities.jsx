@@ -12,9 +12,12 @@ import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit, Trash, Loader2, AlertCircle, Building2, User, Briefcase,
+  Plus, Edit, Trash, Loader2, AlertCircle, Building2, User, Briefcase, Wallet, CreditCard, Home,
 } from "lucide-react";
 import api from "@/api/axios";
+
+const fmt = (n) =>
+  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
 
 const emptyForm = () => ({
   name: "",
@@ -24,6 +27,9 @@ const emptyForm = () => ({
 
 export default function EntitiesPage() {
   const [entities, setEntities] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [cards, setCards] = useState([]);
+  const [liabilities, setLiabilities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -35,13 +41,38 @@ export default function EntitiesPage() {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get("/entities/");
-      setEntities(data);
+      const [e, a, c, l] = await Promise.all([
+        api.get("/entities/"),
+        api.get("/accounts/").catch(() => ({ data: [] })),
+        api.get("/cards/").catch(() => ({ data: [] })),
+        api.get("/liabilities/").catch(() => ({ data: [] })),
+      ]);
+      setEntities(e.data);
+      setAccounts(a.data);
+      setCards(c.data);
+      setLiabilities(l.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Error cargando entidades");
     } finally {
       setLoading(false);
     }
+  };
+
+  const entityStats = (id) => {
+    const accs = accounts.filter((a) => a.entity_id === id);
+    const liabs = liabilities.filter((l) => l.entity_id === id);
+    const accountIds = new Set(accs.map((a) => a.id));
+    const cs = cards.filter((c) => c.account_id && accountIds.has(c.account_id));
+    const balance = accs.reduce((s, a) => s + Number(a.balance || 0), 0);
+    const debt = liabs.reduce((s, l) => s + Number(l.current_balance || 0), 0);
+    return {
+      accounts: accs.length,
+      cards: cs.length,
+      liabilities: liabs.length,
+      balance,
+      debt,
+      net: balance - debt,
+    };
   };
 
   useEffect(() => { load(); }, []);
@@ -174,6 +205,7 @@ export default function EntitiesPage() {
             icon={<User size={18} />}
             tone="emerald"
             items={personal}
+            entityStats={entityStats}
             loading={loading}
             onEdit={openEdit}
             onDelete={handleDelete}
@@ -185,6 +217,7 @@ export default function EntitiesPage() {
             icon={<Briefcase size={18} />}
             tone="indigo"
             items={business}
+            entityStats={entityStats}
             loading={loading}
             onEdit={openEdit}
             onDelete={handleDelete}
@@ -197,7 +230,7 @@ export default function EntitiesPage() {
   );
 }
 
-function EntityColumn({ title, icon, tone, items, loading, onEdit, onDelete, onAdd, emptyText }) {
+function EntityColumn({ title, icon, tone, items, entityStats, loading, onEdit, onDelete, onAdd, emptyText }) {
   const tones = {
     emerald: "text-emerald-500",
     indigo: "text-indigo-400",
@@ -213,26 +246,49 @@ function EntityColumn({ title, icon, tone, items, loading, onEdit, onDelete, onA
       </CardHeader>
       <CardContent className="space-y-2">
         {loading ? (
-          [1, 2].map((i) => <div key={i} className="h-12 rounded bg-muted/50 animate-pulse" />)
+          [1, 2].map((i) => <div key={i} className="h-20 rounded bg-muted/50 animate-pulse" />)
         ) : items.length === 0 ? (
           <p className="text-sm text-muted-foreground py-6 text-center">{emptyText}</p>
         ) : (
-          items.map((e) => (
-            <div key={e.id} className="flex items-center justify-between p-3 rounded-md border border-border bg-card/50">
-              <div>
-                <div className="font-medium">{e.name}</div>
-                {e.tax_id && <div className="text-xs text-muted-foreground font-mono">{e.tax_id}</div>}
+          items.map((e) => {
+            const s = entityStats(e.id);
+            return (
+              <div key={e.id} className="p-3 rounded-md border border-border bg-card/50 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{e.name}</div>
+                    {e.tax_id && <div className="text-xs text-muted-foreground font-mono">{e.tax_id}</div>}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <Button variant="ghost" size="sm" onClick={() => onEdit(e)} title="Editar">
+                      <Edit size={14} />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onDelete(e)} title="Borrar">
+                      <Trash size={14} />
+                    </Button>
+                  </div>
+                </div>
+                {(s.accounts > 0 || s.liabilities > 0 || s.cards > 0) && (
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                    {s.accounts > 0 && (
+                      <span className="inline-flex items-center gap-1"><Wallet size={11} /> {s.accounts}</span>
+                    )}
+                    {s.cards > 0 && (
+                      <span className="inline-flex items-center gap-1"><CreditCard size={11} /> {s.cards}</span>
+                    )}
+                    {s.liabilities > 0 && (
+                      <span className="inline-flex items-center gap-1"><Home size={11} /> {s.liabilities}</span>
+                    )}
+                    <div className="ml-auto flex items-center gap-2 text-xs">
+                      <span className="text-emerald-400 tabular-nums">{fmt(s.balance)}</span>
+                      {s.debt > 0 && <span className="text-rose-400 tabular-nums">-{fmt(s.debt)}</span>}
+                      <span className="font-semibold tabular-nums">= {fmt(s.net)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex gap-1">
-                <Button variant="ghost" size="sm" onClick={() => onEdit(e)} title="Editar">
-                  <Edit size={14} />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onDelete(e)} title="Borrar">
-                  <Trash size={14} />
-                </Button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </CardContent>
     </Card>

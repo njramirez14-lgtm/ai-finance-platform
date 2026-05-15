@@ -1,13 +1,17 @@
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from srv.api.deps import get_db
 from srv.api.deps_auth import get_current_user
+from srv.models.account import Account
 from srv.models.entity import Entity
 from srv.models.liability import Liability
+from srv.models.transaction import Transaction, TransactionType
 from srv.schemas.liability import (
     LiabilityCreate,
     LiabilityOut,
@@ -16,6 +20,13 @@ from srv.schemas.liability import (
 )
 
 router = APIRouter(prefix="/liabilities", tags=["liabilities"])
+
+
+class LiabilityPayment(BaseModel):
+    amount: Decimal = Field(gt=0)
+    account_id: int | None = None
+    description: str | None = Field(default=None, max_length=200)
+    date: datetime | None = None
 
 
 def _verify_entity(db: Session, entity_id: int | None, user_id: int) -> None:
@@ -141,3 +152,51 @@ def delete_liability(
     db.delete(liability)
     db.commit()
     return None
+
+
+@router.post("/{liability_id}/pay", response_model=LiabilityOut)
+def register_payment(
+    liability_id: int,
+    payload: LiabilityPayment,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Register a payment: decreases current_balance and (if account provided)
+    creates an EXPENSE transaction so the cash flow is recorded."""
+    liability = (
+        db.query(Liability)
+        .filter(Liability.id == liability_id, Liability.user_id == current_user.id)
+        .first()
+    )
+    if not liability:
+        raise HTTPException(status_code=404, detail="Liability not found")
+
+    amount = Decimal(str(payload.amount))
+    new_balance = Decimal(str(liability.current_balance or 0)) - amount
+    if new_balance < 0:
+        new_balance = Decimal("0")
+    liability.current_balance = new_balance
+
+    if payload.account_id is not None:
+        acc = (
+            db.query(Account)
+            .filter(Account.id == payload.account_id, Account.user_id == current_user.id)
+            .first()
+        )
+        if not acc:
+            raise HTTPException(status_code=400, detail="Account does not belong to user")
+        desc = payload.description or f"Pago {liability.name}"
+        tx = Transaction(
+            amount=float(amount),
+            type=TransactionType.EXPENSE,
+            description=desc[:200],
+            date=payload.date or datetime.utcnow(),
+            user_id=current_user.id,
+            account_id=payload.account_id,
+            entity_id=liability.entity_id,
+        )
+        db.add(tx)
+
+    db.commit()
+    db.refresh(liability)
+    return liability

@@ -12,12 +12,21 @@ import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
 import {
-  Plus, Edit, Trash, Loader2, AlertCircle, Repeat, Calendar, CreditCard, Pause, Ban, Play,
+  Plus, Edit, Trash, Loader2, AlertCircle, Repeat, Calendar, CreditCard, Pause, Ban, Play, AlertTriangle, Clock,
 } from "lucide-react";
 import api from "@/api/axios";
 
 const fmt = (n, c = "EUR") =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: c }).format(Number(n) || 0);
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(dateStr);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target - now) / (1000 * 60 * 60 * 24));
+}
 
 const CYCLES = [
   { value: "WEEKLY", label: "Semanal", months: 0.230769 },
@@ -348,10 +357,19 @@ export default function SubscriptionsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <Stat label="Coste mensual" value={fmt(summary?.monthly_total || 0)} tone="rose" />
           <Stat label="Coste anual" value={fmt(summary?.yearly_total || 0)} tone="amber" />
           <Stat label="Activas" value={summary?.active_count ?? 0} hint={`${summary?.paused_count ?? 0} pausadas, ${summary?.cancelled_count ?? 0} canceladas`} />
+          <Stat
+            label="Cobros ≤7d"
+            value={items.filter((it) => {
+              if (it.status !== "ACTIVE") return false;
+              const d = daysUntil(it.next_charge_date);
+              return d != null && d >= 0 && d <= 7;
+            }).length}
+            tone="amber"
+          />
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -404,9 +422,28 @@ export default function SubscriptionsPage() {
                     </div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                       <span>{cm.label}</span>
-                      {it.next_charge_date && (
-                        <><span>·</span><span className="inline-flex items-center gap-1"><Calendar size={10} /> Próximo: {it.next_charge_date}</span></>
-                      )}
+                      {it.next_charge_date && (() => {
+                        const dleft = daysUntil(it.next_charge_date);
+                        const tone =
+                          dleft == null ? "" :
+                          dleft < 0 ? "text-rose-400" :
+                          dleft <= 3 ? "text-rose-400" :
+                          dleft <= 7 ? "text-amber-400" : "";
+                        const label =
+                          dleft == null ? `Próximo: ${it.next_charge_date}` :
+                          dleft < 0 ? `Atrasado ${Math.abs(dleft)}d (${it.next_charge_date})` :
+                          dleft === 0 ? `Hoy (${it.next_charge_date})` :
+                          dleft === 1 ? `Mañana (${it.next_charge_date})` :
+                          `En ${dleft}d (${it.next_charge_date})`;
+                        return (
+                          <>
+                            <span>·</span>
+                            <span className={`inline-flex items-center gap-1 ${tone}`}>
+                              {tone ? <AlertTriangle size={10} /> : <Calendar size={10} />} {label}
+                            </span>
+                          </>
+                        );
+                      })()}
                       {card && (
                         <><span>·</span><span className="inline-flex items-center gap-1"><CreditCard size={10} /> {card}</span></>
                       )}
