@@ -10,7 +10,7 @@ class TransactionBase(BaseModel):
     amount: Decimal = Field(gt=0, description="Positive amount in account currency")
     type: TransactionType
     description: str | None = None
-    date: date_type
+    date: datetime
     category_id: int | None = None
     account_id: int | None = None
     entity_id: int | None = None
@@ -24,7 +24,7 @@ class TransactionUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, gt=0)
     type: TransactionType | None = None
     description: str | None = None
-    date: date_type | None = None
+    date: datetime | None = None
     category_id: int | None = None
     account_id: int | None = None
     entity_id: int | None = None
