@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
 
 from srv.database.database import Base
 
@@ -21,4 +21,5 @@ class Card(Base):
     color = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
+    credit_limit = Column(Numeric(14, 2), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

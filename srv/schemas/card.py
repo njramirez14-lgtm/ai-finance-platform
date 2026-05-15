@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -19,6 +20,7 @@ class CardBase(BaseModel):
     notes: str | None = None
     active: bool = True
     account_id: int | None = None
+    credit_limit: Decimal | None = None
 
 
 class CardCreate(CardBase):
@@ -37,12 +39,15 @@ class CardUpdate(BaseModel):
     notes: str | None = None
     active: bool | None = None
     account_id: int | None = None
+    credit_limit: Decimal | None = None
 
 
 class CardOut(CardBase):
     id: int
     user_id: int
     created_at: datetime | None = None
+    monthly_spend: Decimal = Decimal("0")
+    account_name: str | None = None
 
     class Config:
         from_attributes = True
