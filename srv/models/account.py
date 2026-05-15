@@ -26,6 +26,9 @@ class Account(Base):
     type = Column(String, nullable=False)  # CHECKING | SAVINGS | CASH | CARD | CRYPTO | OTHER
     currency = Column(String, nullable=False, default="EUR")
     initial_balance = Column(Numeric(14, 2), nullable=False, default=0)
+    account_number = Column(String, nullable=True)  # IBAN / numero de cuenta / wallet address
+    notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     entity = relationship("Entity", back_populates="accounts")
+    cards = relationship("Card", primaryjoin="Card.account_id == Account.id", lazy="select")

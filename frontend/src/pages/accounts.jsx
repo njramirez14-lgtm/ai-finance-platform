@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Layout from "@/components/layout";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,17 +6,18 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Wallet, Banknote, CreditCard, PiggyBank, Bitcoin, Building2,
+  Eye, EyeOff, Copy, Check, Upload, Sliders, FileText, TrendingUp, TrendingDown,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
-import { scopeFilter, scopeLabel } from "@/store/slices/scope";
+import { scopeFilter } from "@/store/slices/scope";
 
 const fmt = (n, currency = "EUR") =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(Number(n) || 0);
@@ -38,7 +39,55 @@ const emptyForm = () => ({
   currency: "EUR",
   initial_balance: "0",
   entity_id: "",
+  account_number: "",
+  notes: "",
 });
+
+function maskNumber(num) {
+  if (!num) return "";
+  const cleaned = String(num).replace(/\s+/g, "");
+  if (cleaned.length <= 4) return cleaned;
+  const last = cleaned.slice(-4);
+  const stars = "•".repeat(Math.min(cleaned.length - 4, 16));
+  return `${stars} ${last}`;
+}
+
+function AccountNumberLine({ value }) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (!value) {
+    return <span className="text-xs text-muted-foreground italic">Sin número de cuenta</span>;
+  }
+  const display = revealed ? value : maskNumber(value);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+  return (
+    <div className="flex items-center gap-2 text-xs font-mono">
+      <span className="tracking-wider select-all">{display}</span>
+      <button
+        type="button"
+        onClick={() => setRevealed((r) => !r)}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title={revealed ? "Ocultar" : "Mostrar"}
+      >
+        {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
+      </button>
+      <button
+        type="button"
+        onClick={copy}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title="Copiar"
+      >
+        {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+      </button>
+    </div>
+  );
+}
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([]);
@@ -50,6 +99,20 @@ export default function AccountsPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
+
+  // Adjust balance
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustAccount, setAdjustAccount] = useState(null);
+  const [adjustTarget, setAdjustTarget] = useState("0");
+  const [adjustDesc, setAdjustDesc] = useState("");
+  const [adjustBusy, setAdjustBusy] = useState(false);
+
+  // Upload statement
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadAccount, setUploadAccount] = useState(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const uploadInputRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -84,6 +147,8 @@ export default function AccountsPage() {
       currency: acc.currency || "EUR",
       initial_balance: String(acc.initial_balance ?? "0"),
       entity_id: acc.entity_id ? String(acc.entity_id) : "",
+      account_number: acc.account_number || "",
+      notes: acc.notes || "",
     });
     setOpen(true);
   };
@@ -99,6 +164,8 @@ export default function AccountsPage() {
         currency: (form.currency || "EUR").toUpperCase(),
         initial_balance: parseFloat(form.initial_balance) || 0,
         entity_id: form.entity_id ? parseInt(form.entity_id, 10) : null,
+        account_number: form.account_number.trim() || null,
+        notes: form.notes.trim() || null,
       };
       if (editing) {
         await api.put(`/accounts/${editing.id}`, payload);
@@ -124,6 +191,59 @@ export default function AccountsPage() {
     }
   };
 
+  const openAdjust = (acc) => {
+    setAdjustAccount(acc);
+    setAdjustTarget(String(acc.balance ?? "0"));
+    setAdjustDesc("");
+    setAdjustOpen(true);
+  };
+
+  const submitAdjust = async () => {
+    if (!adjustAccount) return;
+    setAdjustBusy(true);
+    try {
+      await api.post(`/accounts/${adjustAccount.id}/adjust-balance`, {
+        target_balance: parseFloat(adjustTarget) || 0,
+        description: adjustDesc.trim() || null,
+      });
+      setAdjustOpen(false);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Error ajustando saldo");
+    } finally {
+      setAdjustBusy(false);
+    }
+  };
+
+  const openUpload = (acc) => {
+    setUploadAccount(acc);
+    setUploadResult(null);
+    setUploadOpen(true);
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadAccount) return;
+    setUploadBusy(true);
+    setUploadResult(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const { data } = await api.post(
+        `/accounts/${uploadAccount.id}/upload-statement`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setUploadResult(data);
+      await load();
+    } catch (err) {
+      setUploadResult({ success: false, error: err.response?.data?.detail || "Error subiendo extracto" });
+    } finally {
+      setUploadBusy(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+    }
+  };
+
   const scopedAccounts = accounts.filter((a) => scopeFilter(a, scope, entities));
   const totalBalance = scopedAccounts.reduce((acc, a) => acc + Number(a.balance || 0), 0);
   const entityName = (id) => {
@@ -134,25 +254,28 @@ export default function AccountsPage() {
 
   return (
     <Layout>
-      <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <div className="p-6 max-w-6xl mx-auto space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
               <Wallet size={22} /> Cuentas
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Tus cuentas bancarias, tarjetas, efectivo y cripto, todo en un sitio.
+              Bancos, tarjetas, efectivo y cripto en un solo lugar.
             </p>
           </div>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gap-2"><Plus size={16} /> Nueva cuenta</Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>{editing ? "Editar cuenta" : "Nueva cuenta"}</DialogTitle>
+                <DialogDescription>
+                  El número de cuenta se mostrará oculto en la app — pulsa el ojo para verlo.
+                </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 py-2">
+              <div className="space-y-4 py-2 max-h-[60vh] overflow-y-auto pr-1">
                 <div className="space-y-2">
                   <Label htmlFor="acc-name">Nombre</Label>
                   <Input
@@ -187,6 +310,17 @@ export default function AccountsPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="acc-number">Número de cuenta / IBAN / wallet</Label>
+                  <Input
+                    id="acc-number"
+                    placeholder="ES00 0000 0000 0000 0000 0000"
+                    value={form.account_number}
+                    onChange={(e) => setForm({ ...form, account_number: e.target.value })}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">Se guarda completo pero por defecto solo se verán los últimos 4 dígitos.</p>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="acc-initial">Saldo inicial</Label>
                   <Input
                     id="acc-initial"
@@ -196,7 +330,7 @@ export default function AccountsPage() {
                     value={form.initial_balance}
                     onChange={(e) => setForm({ ...form, initial_balance: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">El saldo real se calcula sumando tus transacciones a este valor inicial.</p>
+                  <p className="text-xs text-muted-foreground">El saldo real = inicial + (ingresos − gastos) de las transacciones.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Entidad (Personal o Empresa)</Label>
@@ -215,6 +349,15 @@ export default function AccountsPage() {
                   {entities.length === 0 && (
                     <p className="text-xs text-muted-foreground">No tienes entidades. Crea una en la página Entidades.</p>
                   )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="acc-notes">Notas (opcional)</Label>
+                  <Input
+                    id="acc-notes"
+                    placeholder="Recordatorios, sucursal, contacto…"
+                    value={form.notes}
+                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  />
                 </div>
                 {error && (
                   <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
@@ -250,7 +393,7 @@ export default function AccountsPage() {
 
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[1, 2, 3, 4].map((i) => <div key={i} className="h-32 rounded-lg bg-muted/50 animate-pulse" />)}
+            {[1, 2, 3, 4].map((i) => <div key={i} className="h-44 rounded-lg bg-muted/50 animate-pulse" />)}
           </div>
         ) : scopedAccounts.length === 0 ? (
           <Card>
@@ -268,20 +411,21 @@ export default function AccountsPage() {
               const meta = typeMeta(acc.type);
               const Icon = meta.Icon;
               const ent = entityName(acc.entity_id);
+              const cards = acc.cards || [];
               return (
-                <Card key={acc.id} className="relative">
+                <Card key={acc.id} className="relative overflow-hidden">
                   <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 flex-shrink-0">
                           <Icon size={20} />
                         </div>
-                        <div>
-                          <CardTitle className="text-base">{acc.name}</CardTitle>
+                        <div className="min-w-0">
+                          <CardTitle className="text-base truncate">{acc.name}</CardTitle>
                           <CardDescription className="text-xs">{meta.label} · {acc.currency}</CardDescription>
                         </div>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 flex-shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => openEdit(acc)} title="Editar">
                           <Edit size={14} />
                         </Button>
@@ -291,15 +435,46 @@ export default function AccountsPage() {
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold tabular-nums">{fmt(acc.balance, acc.currency)}</div>
-                    <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                      <span>Inicial: {fmt(acc.initial_balance, acc.currency)}</span>
-                      {ent && (
-                        <Badge variant="outline" className="ml-auto">
-                          <Building2 size={10} className="mr-1" /> {ent}
-                        </Badge>
-                      )}
+                  <CardContent className="space-y-3">
+                    <div>
+                      <div className="text-2xl font-bold tabular-nums">{fmt(acc.balance, acc.currency)}</div>
+                      <AccountNumberLine value={acc.account_number} />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-emerald-400">
+                        <TrendingUp size={12} />
+                        <span>30d ingresos: {fmt(acc.monthly_income, acc.currency)}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-rose-400">
+                        <TrendingDown size={12} />
+                        <span>30d gastos: {fmt(acc.monthly_expense, acc.currency)}</span>
+                      </div>
+                    </div>
+
+                    {(cards.length > 0 || ent) && (
+                      <div className="flex items-center gap-2 flex-wrap text-xs">
+                        {ent && (
+                          <Badge variant="outline">
+                            <Building2 size={10} className="mr-1" /> {ent}
+                          </Badge>
+                        )}
+                        {cards.map((c) => (
+                          <Badge key={c.id} variant="secondary" className="font-mono">
+                            <CreditCard size={10} className="mr-1" />
+                            {c.alias}{c.last4 ? ` ••${c.last4}` : ""}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-2 border-t border-border/40">
+                      <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openAdjust(acc)}>
+                        <Sliders size={12} /> Ajustar saldo
+                      </Button>
+                      <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openUpload(acc)}>
+                        <Upload size={12} /> Subir extracto
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -308,6 +483,108 @@ export default function AccountsPage() {
           </div>
         )}
       </div>
+
+      {/* Adjust balance dialog */}
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Ajustar saldo</DialogTitle>
+            <DialogDescription>
+              Crea una transacción correctora para que el saldo coincida con el real.
+              {adjustAccount && <> Saldo actual: <strong>{fmt(adjustAccount.balance, adjustAccount.currency)}</strong>.</>}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Saldo objetivo</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={adjustTarget}
+                onChange={(e) => setAdjustTarget(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Descripción (opcional)</Label>
+              <Input
+                placeholder="Ajuste manual de saldo"
+                value={adjustDesc}
+                onChange={(e) => setAdjustDesc(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAdjustOpen(false)}>Cancelar</Button>
+            <Button onClick={submitAdjust} disabled={adjustBusy}>
+              {adjustBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Aplicando…</> : "Ajustar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload statement dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Subir extracto</DialogTitle>
+            <DialogDescription>
+              {uploadAccount && <>Las transacciones se asignarán a <strong>{uploadAccount.name}</strong>. </>}
+              Sube un CSV o texto de tu extracto bancario y la IA extrae los movimientos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".csv,.txt,.tsv,text/*"
+              className="block w-full text-sm file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 cursor-pointer"
+              onChange={handleFile}
+              disabled={uploadBusy}
+            />
+            {uploadBusy && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Procesando con IA…
+              </div>
+            )}
+            {uploadResult && uploadResult.success && (
+              <div className="space-y-2 p-3 rounded-md text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <div className="flex items-start gap-2">
+                  <Check size={16} className="flex-shrink-0 mt-0.5" />
+                  <span>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</span>
+                </div>
+                {uploadResult.by_category && Object.keys(uploadResult.by_category).length > 0 && (
+                  <div className="pt-2 border-t border-emerald-500/20 space-y-1">
+                    <div className="text-xs text-emerald-300/80 font-medium">Por categoría:</div>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(uploadResult.by_category)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([cat, count]) => (
+                          <Badge key={cat} variant="outline" className="text-xs border-emerald-500/30 text-emerald-300">
+                            {cat} <span className="ml-1 opacity-70">({count})</span>
+                          </Badge>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {uploadResult && !uploadResult.success && (
+              <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                <span>{uploadResult.error}</span>
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground flex items-start gap-2">
+              <FileText size={12} className="mt-0.5 flex-shrink-0" />
+              <span>Formatos: CSV o texto plano. Máx 5 MB.</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setUploadOpen(false)}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
