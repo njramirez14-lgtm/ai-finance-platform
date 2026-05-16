@@ -100,7 +100,7 @@ export default function TransactionsPage() {
     setCandidates([]);
     setPickedKeys(new Set());
     try {
-      const { data } = await api.post("/transactions/detect-subscriptions", { days: 180 });
+      const { data } = await api.post("/transactions/detect-subscriptions", { days: 180, include_matched: false });
       setCandidates(data.candidates || []);
       setPickedKeys(new Set((data.candidates || []).map((c) => c.normalized_key)));
     } catch (err) {

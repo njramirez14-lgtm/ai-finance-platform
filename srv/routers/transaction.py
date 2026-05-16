@@ -287,13 +287,18 @@ def _classify_cycle(avg_gap_days: float) -> str | None:
 @router.post("/detect-subscriptions")
 def detect_subscriptions(
     days: int = Body(default=180, embed=True),
+    include_matched: bool = Body(default=True, embed=True),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Find recurring expense patterns (likely subscriptions). Returns
     candidates with suggested amount, billing cycle, next charge date,
-    and the source transaction IDs. Already-existing subscriptions
-    (same normalized name) are filtered out."""
+    source transaction IDs, and — when applicable — the existing
+    subscription that matches the pattern. With include_matched=False
+    the response only contains net-new patterns (used by the
+    Transactions page); with include_matched=True (default) it also
+    lists already-tracked subscriptions so the Subscriptions page can
+    show coverage."""
     cutoff = datetime.utcnow() - timedelta(days=days)
     rows = (
         db.query(Transaction)
@@ -306,9 +311,9 @@ def detect_subscriptions(
         .all()
     )
 
-    existing = {
-        _normalize_merchant(s.name): s
-        for s in db.query(Subscription).filter(Subscription.user_id == current_user.id).all()
+    existing_subs = db.query(Subscription).filter(Subscription.user_id == current_user.id).all()
+    existing_by_key: dict[str, Subscription] = {
+        _normalize_merchant(s.name): s for s in existing_subs
     }
 
     groups: dict[str, list[Transaction]] = defaultdict(list)
@@ -323,7 +328,8 @@ def detect_subscriptions(
     for key, txs in groups.items():
         if len(txs) < 2:
             continue
-        if key in existing:
+        matched_sub = existing_by_key.get(key)
+        if matched_sub is None and not include_matched:
             continue
         amounts = sorted(float(t.amount or 0) for t in txs)
         med = amounts[len(amounts) // 2]
@@ -348,6 +354,7 @@ def detect_subscriptions(
         if next_charge < today:
             next_charge = today + timedelta(days=1)
         sample = consistent[-1]
+        total_period = round(sum(float(t.amount or 0) for t in consistent), 2)
         candidates.append({
             "name": sample.description or key.title(),
             "normalized_key": key,
@@ -356,13 +363,41 @@ def detect_subscriptions(
             "billing_cycle": cycle,
             "avg_gap_days": round(avg_gap, 1),
             "occurrences": len(consistent),
+            "total_period": total_period,
             "last_charge_date": last.isoformat(),
             "next_charge_date": next_charge.isoformat(),
             "category_id": sample.category_id,
             "account_id": sample.account_id,
             "entity_id": sample.entity_id,
             "transaction_ids": [t.id for t in consistent],
+            "matched_subscription_id": matched_sub.id if matched_sub else None,
+            "matched_subscription_name": matched_sub.name if matched_sub else None,
         })
 
-    candidates.sort(key=lambda c: (c["amount"] * (12 if c["billing_cycle"] == "MONTHLY" else 1)), reverse=True)
-    return {"count": len(candidates), "candidates": candidates}
+    candidates.sort(
+        key=lambda c: (c["amount"] * (12 if c["billing_cycle"] == "MONTHLY" else 1)),
+        reverse=True,
+    )
+
+    # Subscriptions that exist but have NO matching detected pattern in the
+    # period — useful so the user can see "you have Disney+ in your list
+    # but no transaction matched in the last 6 months."
+    matched_keys = {c["normalized_key"] for c in candidates if c["matched_subscription_id"]}
+    unmatched_existing = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "amount": float(s.amount or 0),
+            "billing_cycle": s.billing_cycle,
+        }
+        for s in existing_subs
+        if _normalize_merchant(s.name) not in matched_keys
+    ]
+
+    return {
+        "count": len(candidates),
+        "new_count": sum(1 for c in candidates if not c["matched_subscription_id"]),
+        "matched_count": sum(1 for c in candidates if c["matched_subscription_id"]),
+        "candidates": candidates,
+        "unmatched_existing": unmatched_existing,
+    }

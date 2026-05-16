@@ -537,7 +537,7 @@ export default function LiabilitiesPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {scoped.map((it) => {
               const meta = typeMeta(it.type);
               const Icon = meta.Icon;
@@ -545,11 +545,11 @@ export default function LiabilitiesPage() {
               const months = monthsLeft(it.end_date);
               const ent = entityName(it.entity_id);
               return (
-                <Card key={it.id}>
+                <Card key={it.id} className="overflow-hidden">
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className={`p-2 rounded-lg ${TONE_BG[meta.tone]}`}>
+                        <div className={`p-2 rounded-lg shrink-0 ${TONE_BG[meta.tone]}`}>
                           <Icon size={18} />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -559,14 +559,11 @@ export default function LiabilitiesPage() {
                           </CardDescription>
                         </div>
                       </div>
-                      <div className="flex gap-1 shrink-0">
-                        <Button variant="ghost" size="sm" onClick={() => openAnalyze(it)} title="Analizar archivo del préstamo">
-                          <FileSearch size={14} />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(it)} title="Editar">
+                      <div className="flex gap-0.5 shrink-0">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(it)} title="Editar" className="h-8 w-8 p-0">
                           <Edit size={14} />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(it)} title="Borrar">
+                        <Button variant="ghost" size="sm" onClick={() => handleDelete(it)} title="Borrar" className="h-8 w-8 p-0">
                           <Trash size={14} />
                         </Button>
                       </div>
@@ -578,15 +575,26 @@ export default function LiabilitiesPage() {
                       <div className="text-2xl font-bold tabular-nums">{fmt(it.current_balance, it.currency)}</div>
                       <div className="text-xs text-muted-foreground">de {fmt(it.original_amount, it.currency)}</div>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full gap-1.5"
-                      onClick={() => openPayment(it)}
-                      disabled={Number(it.current_balance || 0) <= 0}
-                    >
-                      <BanknoteArrowDown size={14} /> Registrar pago
-                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => openPayment(it)}
+                        disabled={Number(it.current_balance || 0) <= 0}
+                      >
+                        <BanknoteArrowDown size={14} /> Pagar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => openAnalyze(it)}
+                        title="Analizar cuadro de amortización, escritura o extracto"
+                      >
+                        <FileSearch size={14} /> Analizar
+                      </Button>
+                    </div>
 
                     {it.original_amount > 0 && (
                       <div>

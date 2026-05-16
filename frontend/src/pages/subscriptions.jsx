@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Repeat, Calendar, CreditCard, Pause, Ban, Play, AlertTriangle, Clock,
+  Sparkles, Check, CheckSquare, Square, CheckCircle2, XCircle,
 } from "lucide-react";
 import api from "@/api/axios";
 
@@ -72,6 +73,81 @@ export default function SubscriptionsPage() {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState("ACTIVE");
+
+  // Analyzer
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState(null);
+  const [analyzeError, setAnalyzeError] = useState(null);
+  const [pickedKeys, setPickedKeys] = useState(() => new Set());
+  const [creatingSubs, setCreatingSubs] = useState(false);
+
+  const runAnalyze = async () => {
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    setAnalyzeResult(null);
+    setPickedKeys(new Set());
+    try {
+      const { data } = await api.post("/transactions/detect-subscriptions", {
+        days: 180,
+        include_matched: true,
+      });
+      setAnalyzeResult(data);
+      // Pre-select all NEW candidates by default.
+      const next = new Set();
+      (data.candidates || []).forEach((c) => {
+        if (!c.matched_subscription_id) next.add(c.normalized_key);
+      });
+      setPickedKeys(next);
+    } catch (err) {
+      setAnalyzeError(err.response?.data?.detail || err.message || "Error al analizar");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const openAnalyze = () => {
+    setAnalyzeOpen(true);
+    if (!analyzeResult) runAnalyze();
+  };
+
+  const togglePicked = (key) => setPickedKeys((p) => {
+    const n = new Set(p);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
+
+  const createPicked = async () => {
+    if (!analyzeResult) return;
+    const picks = (analyzeResult.candidates || []).filter(
+      (c) => pickedKeys.has(c.normalized_key) && !c.matched_subscription_id,
+    );
+    if (picks.length === 0) return;
+    setCreatingSubs(true);
+    try {
+      for (const c of picks) {
+        await api.post("/subscriptions/", {
+          name: c.name,
+          amount: c.amount,
+          currency: c.currency,
+          billing_cycle: c.billing_cycle,
+          next_charge_date: c.next_charge_date,
+          started_at: c.last_charge_date,
+          status: "ACTIVE",
+          category_id: c.category_id || null,
+          account_id: c.account_id || null,
+          entity_id: c.entity_id || null,
+        });
+      }
+      setAnalyzeOpen(false);
+      setAnalyzeResult(null);
+      await load();
+    } catch (err) {
+      setAnalyzeError(err.response?.data?.detail || err.message || "Error al crear suscripciones");
+    } finally {
+      setCreatingSubs(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -197,6 +273,10 @@ export default function SubscriptionsPage() {
               Netflix, Spotify, gimnasio, hosting… todo lo que pagas de forma recurrente.
             </p>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" onClick={openAnalyze} className="gap-2">
+            <Sparkles size={16} /> Analizar gastos
+          </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gap-2"><Plus size={16} /> Nueva suscripción</Button>
@@ -348,6 +428,7 @@ export default function SubscriptionsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {error && !open && (
@@ -474,6 +555,157 @@ export default function SubscriptionsPage() {
           </div>
         )}
       </div>
+
+      <Dialog open={analyzeOpen} onOpenChange={setAnalyzeOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles size={18} /> Análisis de suscripciones
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="py-2 max-h-[65vh] overflow-y-auto space-y-4">
+            {analyzing && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+                <Loader2 className="animate-spin" size={16} /> Cruzando transacciones con tus suscripciones…
+              </div>
+            )}
+
+            {analyzeError && (
+              <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                <span>{analyzeError}</span>
+              </div>
+            )}
+
+            {!analyzing && analyzeResult && (
+              <>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="p-3 rounded-md bg-muted/40 border border-border">
+                    <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Detectadas</div>
+                    <div className="text-xl font-bold tabular-nums">{analyzeResult.count}</div>
+                  </div>
+                  <div className="p-3 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                    <div className="text-emerald-300/70 uppercase tracking-wider text-[10px]">Coincidencias</div>
+                    <div className="text-xl font-bold tabular-nums text-emerald-400">{analyzeResult.matched_count}</div>
+                  </div>
+                  <div className="p-3 rounded-md bg-amber-500/5 border border-amber-500/20">
+                    <div className="text-amber-300/70 uppercase tracking-wider text-[10px]">Nuevas</div>
+                    <div className="text-xl font-bold tabular-nums text-amber-400">{analyzeResult.new_count}</div>
+                  </div>
+                </div>
+
+                {analyzeResult.matched_count > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 size={12} /> Ya en tus suscripciones
+                    </div>
+                    {analyzeResult.candidates.filter((c) => c.matched_subscription_id).map((c) => (
+                      <div key={c.normalized_key} className="flex items-start gap-3 p-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 text-sm">
+                        <CheckCircle2 size={16} className="text-emerald-400 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">
+                            {c.matched_subscription_name}
+                            {c.name && c.name !== c.matched_subscription_name && (
+                              <span className="text-xs text-muted-foreground ml-2">↔ {c.name}</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {c.occurrences} cargos · cada ~{c.avg_gap_days}d · último {c.last_charge_date} · total 6m {fmt(c.total_period)}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <div className="font-semibold tabular-nums">{fmt(c.amount)}</div>
+                          <Badge variant="outline" className="text-[10px]"><Repeat size={10} className="mr-1" /> {c.billing_cycle}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {analyzeResult.new_count > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      <AlertTriangle size={12} /> Nuevas — no estás siguiéndolas como suscripción
+                    </div>
+                    {analyzeResult.candidates.filter((c) => !c.matched_subscription_id).map((c) => {
+                      const picked = pickedKeys.has(c.normalized_key);
+                      return (
+                        <button
+                          type="button"
+                          key={c.normalized_key}
+                          onClick={() => togglePicked(c.normalized_key)}
+                          className={`w-full text-left flex items-start gap-3 p-3 rounded-md border transition-colors ${
+                            picked ? "border-amber-500/40 bg-amber-500/5" : "border-border hover:bg-muted/40"
+                          }`}
+                        >
+                          {picked
+                            ? <CheckSquare size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                            : <Square size={16} className="text-muted-foreground mt-0.5 flex-shrink-0" />}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate">{c.name}</div>
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {c.occurrences} cargos · cada ~{c.avg_gap_days}d · último {c.last_charge_date}
+                            </div>
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <div className="font-semibold tabular-nums">{fmt(c.amount)}</div>
+                            <Badge variant="outline" className="text-[10px]"><Repeat size={10} className="mr-1" /> {c.billing_cycle}</Badge>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {analyzeResult.unmatched_existing && analyzeResult.unmatched_existing.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-rose-400 uppercase tracking-wider flex items-center gap-1">
+                      <XCircle size={12} /> En tu lista pero sin cargos detectados (¿pausada / cancelada?)
+                    </div>
+                    {analyzeResult.unmatched_existing.map((s) => (
+                      <div key={s.id} className="flex items-start gap-3 p-3 rounded-md border border-rose-500/20 bg-rose-500/5 text-sm">
+                        <XCircle size={16} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{s.name}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            No se encontraron cargos en los últimos 6 meses. Revisa si la suscripción sigue activa.
+                          </div>
+                        </div>
+                        <div className="font-semibold tabular-nums">{fmt(s.amount)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {analyzeResult.count === 0 && analyzeResult.unmatched_existing.length === 0 && (
+                  <div className="text-sm text-muted-foreground py-6 text-center">
+                    No se han detectado patrones recurrentes. Sube los extractos de tus cuentas para que haya datos que analizar.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setAnalyzeOpen(false)}>Cerrar</Button>
+            <Button variant="outline" onClick={runAnalyze} disabled={analyzing} className="gap-2">
+              <Sparkles size={14} /> Re-analizar
+            </Button>
+            {analyzeResult && analyzeResult.new_count > 0 && (
+              <Button
+                onClick={createPicked}
+                disabled={creatingSubs || pickedKeys.size === 0}
+                className="gap-2"
+              >
+                {creatingSubs
+                  ? <><Loader2 className="animate-spin" size={14} /> Creando…</>
+                  : <>Añadir {pickedKeys.size}</>}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
