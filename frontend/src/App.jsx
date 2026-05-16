@@ -18,6 +18,7 @@ import LiabilitiesPage from "./pages/liabilities";
 import CardsPage from "./pages/cards";
 import SubscriptionsPage from "./pages/subscriptions";
 import IncomePage from "./pages/income";
+import BudgetsPage from "./pages/budgets";
 import BacktestPage from "./pages/backtest";
 import StrategyPage from "./pages/strategy";
 import PortfolioPage from "./pages/portfolio";
@@ -144,6 +145,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <IncomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/budgets"
+            element={
+              <ProtectedRoute>
+                <BudgetsPage />
               </ProtectedRoute>
             }
           />

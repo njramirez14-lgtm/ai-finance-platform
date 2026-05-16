@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Receipt, UploadCloud, FileText, CheckCircle2,
-  Search, X, Wallet, Tag, Trash2, CheckSquare, Square, Sparkles, Repeat,
+  Search, X, Wallet, Tag, Trash2, CheckSquare, Square, Sparkles, Repeat, Copy,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -93,6 +93,15 @@ export default function TransactionsPage() {
   const [candidates, setCandidates] = useState([]);
   const [pickedKeys, setPickedKeys] = useState(() => new Set());
   const [creatingSubs, setCreatingSubs] = useState(false);
+
+  // Duplicate detector
+  const [dupOpen, setDupOpen] = useState(false);
+  const [dupLoading, setDupLoading] = useState(false);
+  const [dupGroups, setDupGroups] = useState([]);
+  const [dupSummary, setDupSummary] = useState({ count: 0, duplicates_total: 0, amount_at_risk: 0 });
+  const [dupKeepIds, setDupKeepIds] = useState({}); // { groupKey: keepTxId }
+  const [dupError, setDupError] = useState(null);
+  const [dupDeleting, setDupDeleting] = useState(false);
   const [analyzerError, setAnalyzerError] = useState(null);
 
   const analyzeExpenses = async () => {
@@ -151,6 +160,65 @@ export default function TransactionsPage() {
       setAnalyzerError(err?.response?.data?.detail || err.message || "Error al crear suscripciones");
     } finally {
       setCreatingSubs(false);
+    }
+  };
+
+  const openDuplicates = async () => {
+    setDupOpen(true);
+    setDupError(null);
+    setDupLoading(true);
+    try {
+      const { data } = await api.post("/transactions/detect-duplicates", { days: 365, window_days: 2 });
+      const groups = data.groups || [];
+      setDupGroups(groups);
+      setDupSummary({
+        count: data.count || 0,
+        duplicates_total: data.duplicates_total || 0,
+        amount_at_risk: data.amount_at_risk || 0,
+      });
+      // Default: keep the oldest transaction in each group.
+      const keep = {};
+      for (const g of groups) {
+        const sorted = [...g.transactions].sort((a, b) => a.date.localeCompare(b.date));
+        keep[g.key + "::" + g.amount + "::" + g.type] = sorted[0].id;
+      }
+      setDupKeepIds(keep);
+    } catch (err) {
+      setDupError(err?.response?.data?.detail || err.message || "Error buscando duplicados");
+    } finally {
+      setDupLoading(false);
+    }
+  };
+
+  const groupKeyOf = (g) => g.key + "::" + g.amount + "::" + g.type;
+
+  const setKeep = (g, txId) => {
+    setDupKeepIds((prev) => ({ ...prev, [groupKeyOf(g)]: txId }));
+  };
+
+  const deleteDuplicates = async () => {
+    const toDelete = [];
+    for (const g of dupGroups) {
+      const keepId = dupKeepIds[groupKeyOf(g)];
+      for (const t of g.transactions) {
+        if (t.id !== keepId) toDelete.push(t.id);
+      }
+    }
+    if (toDelete.length === 0) return;
+    if (!window.confirm(`Vas a borrar ${toDelete.length} transacciones duplicadas. ¿Continuar?`)) return;
+    setDupDeleting(true);
+    setDupError(null);
+    try {
+      await api.post("/transactions/bulk-delete", { ids: toDelete });
+      setDupOpen(false);
+      setDupGroups([]);
+      setDupSummary({ count: 0, duplicates_total: 0, amount_at_risk: 0 });
+      setDupKeepIds({});
+      await load();
+    } catch (err) {
+      setDupError(err?.response?.data?.detail || err.message || "Error borrando duplicados");
+    } finally {
+      setDupDeleting(false);
     }
   };
 
@@ -347,6 +415,9 @@ export default function TransactionsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={openDuplicates} className="gap-2">
+              <Copy size={16} /> Buscar duplicados
+            </Button>
             <Button variant="outline" onClick={openAnalyzer} className="gap-2">
               <Sparkles size={16} /> Analizar gastos
             </Button>
@@ -813,6 +884,113 @@ export default function TransactionsPage() {
               {creatingSubs
                 ? <><Loader2 className="animate-spin" size={14} /> Creando…</>
                 : <>Añadir {pickedKeys.size} a suscripciones</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Duplicate detector dialog */}
+      <Dialog open={dupOpen} onOpenChange={setDupOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Copy size={18} /> Transacciones duplicadas
+            </DialogTitle>
+            <DialogDescription>
+              Mismo importe, mismo comercio y fechas a ±2 días. Marca cuál conservar y borra el resto.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <MiniStat label="Grupos" value={dupSummary.count} tone="indigo" />
+            <MiniStat label="A borrar" value={dupSummary.duplicates_total} tone="amber" />
+            <MiniStat label="Importe recuperable" value={fmt(dupSummary.amount_at_risk)} tone="emerald" />
+          </div>
+
+          {dupError && (
+            <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-3">
+              <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{dupError}</span>
+            </div>
+          )}
+
+          <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-1">
+            {dupLoading && (
+              <div className="flex justify-center py-10">
+                <Loader2 className="animate-spin text-muted-foreground" size={24} />
+              </div>
+            )}
+            {!dupLoading && dupGroups.length === 0 && !dupError && (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                <CheckCircle2 size={28} className="mx-auto mb-2 text-emerald-500/60" />
+                No se han encontrado duplicados. ¡Limpio!
+              </div>
+            )}
+            {!dupLoading && dupGroups.map((g) => {
+              const gKey = groupKeyOf(g);
+              const keepId = dupKeepIds[gKey];
+              return (
+                <Card key={gKey}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="text-sm truncate">{g.merchant}</CardTitle>
+                        <CardDescription className="text-xs">
+                          {g.occurrences} cargos · {g.type === "INCOME" ? "Ingreso" : g.type === "EXPENSE" ? "Gasto" : "Transferencia"}
+                        </CardDescription>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="font-semibold tabular-nums">{fmt(g.amount)}</div>
+                        <div className="text-[10px] text-muted-foreground">por cargo</div>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1">
+                      {g.transactions.map((t) => {
+                        const isKeep = t.id === keepId;
+                        return (
+                          <button
+                            type="button"
+                            key={t.id}
+                            onClick={() => setKeep(g, t.id)}
+                            className={`w-full flex items-center gap-3 px-2 py-1.5 rounded text-left text-sm transition-colors ${
+                              isKeep
+                                ? "bg-emerald-500/10 border border-emerald-500/30"
+                                : "border border-transparent hover:bg-muted/50"
+                            }`}
+                          >
+                            <div className={`h-4 w-4 rounded-full border flex-shrink-0 ${
+                              isKeep ? "border-emerald-500 bg-emerald-500" : "border-border"
+                            }`} />
+                            <span className="font-mono text-xs text-muted-foreground w-24">{t.date}</span>
+                            <span className="font-mono tabular-nums w-20">{fmt(t.amount)}</span>
+                            <span className="truncate text-xs">{t.description || "—"}</span>
+                            {isKeep && (
+                              <Badge variant="outline" className="ml-auto text-[10px] border-emerald-500/40 text-emerald-500">
+                                conservar
+                              </Badge>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setDupOpen(false)}>Cerrar</Button>
+            <Button
+              onClick={deleteDuplicates}
+              disabled={dupDeleting || dupGroups.length === 0}
+              className="gap-2"
+            >
+              {dupDeleting
+                ? <><Loader2 className="animate-spin" size={14} /> Borrando…</>
+                : <><Trash2 size={14} /> Borrar {dupSummary.duplicates_total} duplicados</>}
             </Button>
           </DialogFooter>
         </DialogContent>

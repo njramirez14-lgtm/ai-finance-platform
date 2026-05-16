@@ -88,11 +88,55 @@ def apply_subscription_kind(engine: Engine) -> None:
             ))
 
 
+def apply_budgets_table(engine: Engine) -> None:
+    """Create the budgets table on first cold start. Uses CREATE TABLE IF
+    NOT EXISTS so re-running is safe; metadata.create_all wouldn't help
+    here because the import-time table list may include the new model
+    without create_all having been called yet on the prod DB."""
+    is_pg = _is_postgres(engine)
+    insp = inspect(engine)
+    if "budgets" in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        if is_pg:
+            conn.execute(text(
+                """
+                CREATE TABLE IF NOT EXISTS budgets (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    category_id INTEGER REFERENCES categories(id),
+                    month VARCHAR(7) NOT NULL,
+                    amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    currency VARCHAR NOT NULL DEFAULT 'EUR',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    CONSTRAINT uq_budget_user_cat_month UNIQUE (user_id, category_id, month)
+                )
+                """
+            ))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_budgets_user_id ON budgets(user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_budgets_month ON budgets(month)"))
+        else:
+            conn.execute(text(
+                """
+                CREATE TABLE IF NOT EXISTS budgets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    category_id INTEGER,
+                    month VARCHAR(7) NOT NULL,
+                    amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    currency VARCHAR NOT NULL DEFAULT 'EUR',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, category_id, month)
+                )
+                """
+            ))
+
+
 def run_all(engine: Engine) -> None:
     """Run every migration in order, swallowing exceptions so a single failing
     statement doesn't take the whole app down (we'd rather serve stale schema
     and fix forward)."""
-    for fn in (apply_transfer_support, apply_subscription_kind):
+    for fn in (apply_transfer_support, apply_subscription_kind, apply_budgets_table):
         try:
             fn(engine)
         except Exception:

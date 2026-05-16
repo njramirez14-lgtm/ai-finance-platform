@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table";
 import {
   TrendingUp, TrendingDown, Wallet, Receipt, Plus, AlertCircle, ArrowRight,
-  Camera, Sparkles, LineChart, Building2,
+  Camera, Sparkles, LineChart, Building2, Repeat,
 } from "lucide-react";
 import api from "@/api/axios";
 import TicketScanDialog from "@/components/ticket-scan-dialog";
@@ -32,6 +32,8 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [liabilities, setLiabilities] = useState([]);
+  const [recurringIncome, setRecurringIncome] = useState(null);
+  const [recurringExpense, setRecurringExpense] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -42,18 +44,22 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [r, all, acc, cat, liab] = await Promise.all([
+      const [r, all, acc, cat, liab, recIn, recOut] = await Promise.all([
         api.get("/transactions/", { params: { limit: 8 } }),
         api.get("/transactions/", { params: { limit: 500 } }),
         api.get("/accounts/").catch(() => ({ data: [] })),
         api.get("/categories/").catch(() => ({ data: [] })),
         api.get("/liabilities/").catch(() => ({ data: [] })),
+        api.get("/subscriptions/summary", { params: { kind: "INCOME" } }).catch(() => ({ data: null })),
+        api.get("/subscriptions/summary", { params: { kind: "EXPENSE" } }).catch(() => ({ data: null })),
       ]);
       setRecent(r.data);
       setTransactions(all.data);
       setAccounts(acc.data);
       setCategories(cat.data);
       setLiabilities(liab.data || []);
+      setRecurringIncome(recIn.data);
+      setRecurringExpense(recOut.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Error cargando el dashboard");
     } finally {
@@ -210,6 +216,9 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Recurring cashflow */}
+        <RecurringCashflowCard income={recurringIncome} expense={recurringExpense} loading={loading} />
 
         {/* Quick actions cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -415,6 +424,92 @@ function KpiCard({ label, value, icon, tone = "slate", hint, loading }) {
             {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecurringCashflowCard({ income, expense, loading }) {
+  const inMonthly = Number(income?.monthly_total || 0);
+  const outMonthly = Number(expense?.monthly_total || 0);
+  const net = inMonthly - outMonthly;
+  const hasData = (income?.active_count || 0) + (expense?.active_count || 0) > 0;
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-4">
+          <div className="h-16 bg-muted/40 rounded animate-pulse" />
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!hasData) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-4 flex items-center gap-4 flex-wrap">
+          <div className="p-2 rounded-md bg-indigo-500/10 text-indigo-400">
+            <Repeat size={20} />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-sm font-medium">Flujo recurrente</div>
+            <div className="text-xs text-muted-foreground">
+              Registra tu nómina e ingresos fijos en /income y suscripciones en /subscriptions para ver tu cashflow neto mensual.
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Link to="/income"><Button variant="outline" size="sm">Ingresos</Button></Link>
+            <Link to="/subscriptions"><Button variant="outline" size="sm">Suscripciones</Button></Link>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const netClass = net >= 0
+    ? "border-emerald-500/20 bg-emerald-500/5"
+    : "border-rose-500/20 bg-rose-500/5";
+
+  return (
+    <Card className={netClass}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Repeat size={16} /> Flujo mensual recurrente
+        </CardTitle>
+        <CardDescription>
+          Ingresos fijos − suscripciones y cuotas regulares
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-3 gap-4 items-center">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-emerald-500 mb-1">Entra</div>
+            <div className="text-xl font-bold tabular-nums text-emerald-500">
+              +{fmt(inMonthly)}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {income?.active_count || 0} activos
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-rose-500 mb-1">Sale</div>
+            <div className="text-xl font-bold tabular-nums text-rose-500">
+              −{fmt(outMonthly)}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {expense?.active_count || 0} suscripciones
+            </div>
+          </div>
+          <div className="border-l pl-4">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Neto / mes</div>
+            <div className={`text-2xl font-bold tabular-nums ${net >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+              {net >= 0 ? "+" : ""}{fmt(net)}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {fmt(net * 12)} / año
+            </div>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

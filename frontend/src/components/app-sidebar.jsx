@@ -16,6 +16,7 @@ import {
   Target,
   Crown,
   TrendingUp,
+  PiggyBank,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -70,6 +71,11 @@ export function AppSidebar({ ...props }) {
         title: "Ingresos",
         url: "/income",
         icon: TrendingUp,
+      },
+      {
+        title: "Presupuestos",
+        url: "/budgets",
+        icon: PiggyBank,
       },
       {
         title: "Deudas",

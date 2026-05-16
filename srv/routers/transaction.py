@@ -260,6 +260,98 @@ def bulk_delete_transactions(
     return {"deleted": deleted}
 
 
+@router.post("/detect-duplicates")
+def detect_duplicates(
+    days: int = Body(default=365, embed=True),
+    window_days: int = Body(default=2, embed=True),
+    amount_tolerance_cents: int = Body(default=1, embed=True),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Find groups of likely duplicate transactions. Two transactions
+    are considered duplicates when they share the same type, the same
+    amount (within `amount_tolerance_cents`), the same normalized
+    merchant key, and dates within `window_days`. Returns groups
+    sorted by total impact (count × amount) so the user can review the
+    most damaging ones first."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= cutoff,
+        )
+        .order_by(Transaction.date.asc())
+        .all()
+    )
+
+    buckets: dict[tuple, list[Transaction]] = defaultdict(list)
+    for t in rows:
+        key = _normalize_merchant(t.description)
+        if not key or len(key) < 3:
+            continue
+        # Round to the cent so 12.30 and 12.30 collide regardless of float drift.
+        cents = round(float(t.amount or 0) * 100)
+        buckets[(t.type, cents, key)].append(t)
+
+    tol = max(0, amount_tolerance_cents)
+    groups = []
+    for (tx_type, cents, key), txs in buckets.items():
+        if len(txs) < 2:
+            continue
+        # Cluster by date proximity within the window. Sorted ascending,
+        # so we walk and append each tx to the current cluster while its
+        # date is within window of the cluster's anchor.
+        txs.sort(key=lambda t: t.date)
+        clusters: list[list[Transaction]] = []
+        for t in txs:
+            placed = False
+            for cluster in clusters:
+                anchor_date = cluster[0].date
+                if abs((t.date - anchor_date).days) <= window_days:
+                    # also confirm cent tolerance vs the cluster anchor
+                    anchor_cents = round(float(cluster[0].amount or 0) * 100)
+                    if abs(round(float(t.amount or 0) * 100) - anchor_cents) <= tol:
+                        cluster.append(t)
+                        placed = True
+                        break
+            if not placed:
+                clusters.append([t])
+
+        for cluster in clusters:
+            if len(cluster) < 2:
+                continue
+            sample = cluster[0]
+            groups.append({
+                "key": key,
+                "merchant": sample.description or key.title(),
+                "type": tx_type.value if hasattr(tx_type, "value") else str(tx_type),
+                "amount": round(float(sample.amount or 0), 2),
+                "occurrences": len(cluster),
+                "total_amount": round(sum(float(t.amount or 0) for t in cluster), 2),
+                "transactions": [
+                    {
+                        "id": t.id,
+                        "date": (t.date.date() if isinstance(t.date, datetime) else t.date).isoformat(),
+                        "amount": round(float(t.amount or 0), 2),
+                        "description": t.description,
+                        "account_id": t.account_id,
+                        "category_id": t.category_id,
+                    }
+                    for t in cluster
+                ],
+            })
+
+    # Highest impact first: more occurrences and bigger amount.
+    groups.sort(key=lambda g: (g["occurrences"], g["total_amount"]), reverse=True)
+    return {
+        "count": len(groups),
+        "duplicates_total": sum(g["occurrences"] - 1 for g in groups),
+        "amount_at_risk": round(sum((g["occurrences"] - 1) * g["amount"] for g in groups), 2),
+        "groups": groups,
+    }
+
+
 _DESC_NOISE = re.compile(r"[\d#*]+|\b(compra|pago|cargo|tarj|tarjeta|nfc|contactless|online|web|en|el|la|de|del|por|ref|recibo)\b", re.IGNORECASE)
 _WS = re.compile(r"\s+")
 

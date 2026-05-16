@@ -1,4 +1,5 @@
 from srv.models.account import Account, AccountType
+from srv.models.budget import Budget
 from srv.models.card import Card
 from srv.models.category import Category
 from srv.models.chat import ChatMessage, ChatSummary
@@ -16,6 +17,7 @@ from srv.models.user import User
 __all__ = [
     "Account",
     "AccountType",
+    "Budget",
     "Card",
     "Category",
     "ChatMessage",
