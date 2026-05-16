@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Receipt, UploadCloud, FileText, CheckCircle2,
-  Search, X, Wallet, Tag, Trash2, CheckSquare, Square,
+  Search, X, Wallet, Tag, Trash2, CheckSquare, Square, Sparkles, Repeat,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -85,6 +85,73 @@ export default function TransactionsPage() {
   // Multi-select
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Expense analyzer
+  const [analyzerOpen, setAnalyzerOpen] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [candidates, setCandidates] = useState([]);
+  const [pickedKeys, setPickedKeys] = useState(() => new Set());
+  const [creatingSubs, setCreatingSubs] = useState(false);
+  const [analyzerError, setAnalyzerError] = useState(null);
+
+  const analyzeExpenses = async () => {
+    setAnalyzing(true);
+    setAnalyzerError(null);
+    setCandidates([]);
+    setPickedKeys(new Set());
+    try {
+      const { data } = await api.post("/transactions/detect-subscriptions", { days: 180 });
+      setCandidates(data.candidates || []);
+      setPickedKeys(new Set((data.candidates || []).map((c) => c.normalized_key)));
+    } catch (err) {
+      setAnalyzerError(err?.response?.data?.detail || err.message || "Error al analizar");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const openAnalyzer = () => {
+    setAnalyzerOpen(true);
+    if (candidates.length === 0) analyzeExpenses();
+  };
+
+  const togglePicked = (key) => {
+    setPickedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const createSubscriptionsFromPicked = async () => {
+    const picks = candidates.filter((c) => pickedKeys.has(c.normalized_key));
+    if (picks.length === 0) return;
+    setCreatingSubs(true);
+    try {
+      for (const c of picks) {
+        await api.post("/subscriptions/", {
+          name: c.name,
+          amount: c.amount,
+          currency: c.currency,
+          billing_cycle: c.billing_cycle,
+          next_charge_date: c.next_charge_date,
+          started_at: c.last_charge_date,
+          status: "ACTIVE",
+          category_id: c.category_id || null,
+          account_id: c.account_id || null,
+          entity_id: c.entity_id || null,
+        });
+      }
+      setAnalyzerOpen(false);
+      setCandidates([]);
+      setPickedKeys(new Set());
+    } catch (err) {
+      setAnalyzerError(err?.response?.data?.detail || err.message || "Error al crear suscripciones");
+    } finally {
+      setCreatingSubs(false);
+    }
+  };
 
   const toggleSelected = (id) => {
     setSelected((prev) => {
@@ -257,7 +324,11 @@ export default function TransactionsPage() {
               Filtra, busca, agrupa por mes. Edita con un click. Sube extractos para que la IA categorice automáticamente.
             </p>
           </div>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={openAnalyzer} className="gap-2">
+              <Sparkles size={16} /> Analizar gastos
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gap-2"><Plus size={16} /> Nueva transacción</Button>
             </DialogTrigger>
@@ -374,6 +445,7 @@ export default function TransactionsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {error && !open && (
@@ -609,6 +681,92 @@ export default function TransactionsPage() {
           </Button>
         </div>
       )}
+
+      <Dialog open={analyzerOpen} onOpenChange={setAnalyzerOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles size={18} /> Suscripciones detectadas
+            </DialogTitle>
+            <DialogDescription>
+              Patrones de cargo recurrente en los últimos 6 meses. Marca las que quieras añadir como suscripciones.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 max-h-[60vh] overflow-y-auto space-y-2">
+            {analyzing && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+                <Loader2 className="animate-spin" size={16} /> Analizando transacciones…
+              </div>
+            )}
+
+            {analyzerError && (
+              <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                <span>{analyzerError}</span>
+              </div>
+            )}
+
+            {!analyzing && !analyzerError && candidates.length === 0 && (
+              <div className="text-sm text-muted-foreground py-8 text-center">
+                No se han detectado patrones recurrentes. Necesitas al menos 2 cargos del mismo comercio con importe similar y separación regular (semanal, mensual, trimestral, anual).
+              </div>
+            )}
+
+            {candidates.map((c) => {
+              const picked = pickedKeys.has(c.normalized_key);
+              return (
+                <button
+                  type="button"
+                  key={c.normalized_key}
+                  onClick={() => togglePicked(c.normalized_key)}
+                  className={`w-full text-left flex items-start gap-3 p-3 rounded-md border transition-colors ${
+                    picked ? "border-emerald-500/40 bg-emerald-500/5" : "border-border hover:bg-muted/40"
+                  }`}
+                >
+                  {picked
+                    ? <CheckSquare size={18} className="text-emerald-500 mt-0.5 flex-shrink-0" />
+                    : <Square size={18} className="text-muted-foreground mt-0.5 flex-shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium truncate">{c.name}</span>
+                      <Badge variant="outline" className="gap-1 text-[10px]">
+                        <Repeat size={10} /> {c.billing_cycle}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {c.occurrences} cargos · cada ~{c.avg_gap_days}d
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Último: {c.last_charge_date} · Próximo estimado: {c.next_charge_date}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="font-semibold tabular-nums">{fmt(c.amount)}</div>
+                    <div className="text-[10px] text-muted-foreground">por cargo</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setAnalyzerOpen(false)}>Cerrar</Button>
+            <Button variant="outline" onClick={analyzeExpenses} disabled={analyzing} className="gap-2">
+              <Sparkles size={14} /> Re-analizar
+            </Button>
+            <Button
+              onClick={createSubscriptionsFromPicked}
+              disabled={creatingSubs || pickedKeys.size === 0}
+              className="gap-2"
+            >
+              {creatingSubs
+                ? <><Loader2 className="animate-spin" size={14} /> Creando…</>
+                : <>Añadir {pickedKeys.size} a suscripciones</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
@@ -623,7 +781,7 @@ function MiniStat({ label, value, tone }) {
     <Card>
       <CardContent className="pt-4">
         <div className={`text-xs uppercase tracking-wider ${tones[tone]}`}>{label}</div>
-        <div className="text-2xl font-bold tabular-nums mt-1">{value}</div>
+        <div className={`text-2xl font-bold tabular-nums mt-1 ${tones[tone]}`}>{value}</div>
       </CardContent>
     </Card>
   );

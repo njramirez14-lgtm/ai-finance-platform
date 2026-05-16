@@ -1,4 +1,6 @@
-from datetime import date as date_type
+import re
+from collections import defaultdict
+from datetime import date as date_type, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
@@ -10,6 +12,7 @@ from srv.api.deps_auth import get_current_user
 from srv.models.account import Account
 from srv.models.category import Category
 from srv.models.entity import Entity
+from srv.models.subscription import Subscription
 from srv.models.transaction import Transaction, TransactionType
 from srv.schemas.transaction import (
     TransactionCreate,
@@ -249,3 +252,111 @@ def bulk_delete_transactions(
     )
     db.commit()
     return {"deleted": deleted}
+
+
+_DESC_NOISE = re.compile(r"[\d#*]+|\b(compra|pago|cargo|tarj|tarjeta|nfc|contactless|online|web|en|el|la|de|del|por|ref|recibo)\b", re.IGNORECASE)
+_WS = re.compile(r"\s+")
+
+
+def _normalize_merchant(desc: str | None) -> str:
+    if not desc:
+        return ""
+    s = _DESC_NOISE.sub(" ", desc.lower())
+    s = _WS.sub(" ", s).strip()
+    return s
+
+
+def _classify_cycle(avg_gap_days: float) -> str | None:
+    if 5 <= avg_gap_days <= 9:
+        return "WEEKLY"
+    if 25 <= avg_gap_days <= 35:
+        return "MONTHLY"
+    if 85 <= avg_gap_days <= 95:
+        return "QUARTERLY"
+    if 355 <= avg_gap_days <= 375:
+        return "YEARLY"
+    return None
+
+
+@router.post("/detect-subscriptions")
+def detect_subscriptions(
+    days: int = Body(default=180, embed=True),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Find recurring expense patterns (likely subscriptions). Returns
+    candidates with suggested amount, billing cycle, next charge date,
+    and the source transaction IDs. Already-existing subscriptions
+    (same normalized name) are filtered out."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.type == TransactionType.EXPENSE,
+            Transaction.date >= cutoff,
+        )
+        .order_by(Transaction.date.asc())
+        .all()
+    )
+
+    existing = {
+        _normalize_merchant(s.name): s
+        for s in db.query(Subscription).filter(Subscription.user_id == current_user.id).all()
+    }
+
+    groups: dict[str, list[Transaction]] = defaultdict(list)
+    for t in rows:
+        key = _normalize_merchant(t.description)
+        if not key or len(key) < 3:
+            continue
+        groups[key].append(t)
+
+    today = date_type.today()
+    candidates = []
+    for key, txs in groups.items():
+        if len(txs) < 2:
+            continue
+        if key in existing:
+            continue
+        amounts = sorted(float(t.amount or 0) for t in txs)
+        med = amounts[len(amounts) // 2]
+        if med <= 0:
+            continue
+        # require amounts within 15% of median (rules out one-off purchases at variable merchants)
+        consistent = [t for t in txs if med * 0.85 <= float(t.amount or 0) <= med * 1.15]
+        if len(consistent) < 2:
+            continue
+        consistent.sort(key=lambda t: t.date)
+        gaps = [
+            (consistent[i].date - consistent[i - 1].date).days
+            for i in range(1, len(consistent))
+        ]
+        avg_gap = sum(gaps) / len(gaps)
+        cycle = _classify_cycle(avg_gap)
+        if cycle is None:
+            continue
+        last = consistent[-1].date.date() if isinstance(consistent[-1].date, datetime) else consistent[-1].date
+        next_days = {"WEEKLY": 7, "MONTHLY": 30, "QUARTERLY": 90, "YEARLY": 365}[cycle]
+        next_charge = last + timedelta(days=next_days)
+        if next_charge < today:
+            next_charge = today + timedelta(days=1)
+        sample = consistent[-1]
+        candidates.append({
+            "name": sample.description or key.title(),
+            "normalized_key": key,
+            "amount": round(float(sample.amount or med), 2),
+            "currency": "EUR",
+            "billing_cycle": cycle,
+            "avg_gap_days": round(avg_gap, 1),
+            "occurrences": len(consistent),
+            "last_charge_date": last.isoformat(),
+            "next_charge_date": next_charge.isoformat(),
+            "category_id": sample.category_id,
+            "account_id": sample.account_id,
+            "entity_id": sample.entity_id,
+            "transaction_ids": [t.id for t in consistent],
+        })
+
+    candidates.sort(key=lambda c: (c["amount"] * (12 if c["billing_cycle"] == "MONTHLY" else 1)), reverse=True)
+    return {"count": len(candidates), "candidates": candidates}
