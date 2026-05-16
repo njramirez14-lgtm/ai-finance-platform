@@ -147,7 +147,19 @@ def _account_balance(db: Session, account: Account) -> Decimal:
         .scalar()
         or 0
     )
-    return initial + Decimal(str(income)) - Decimal(str(expense))
+    # TRANSFER counts as money leaving the source account (e.g. CaixaBank PAYPAL
+    # charge that funds a PayPal purchase), so it decrements the balance like an
+    # EXPENSE — but it's excluded from the global Gastos total elsewhere.
+    transfer_out = (
+        db.query(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.account_id == account.id,
+            Transaction.type == TransactionType.TRANSFER,
+        )
+        .scalar()
+        or 0
+    )
+    return initial + Decimal(str(income)) - Decimal(str(expense)) - Decimal(str(transfer_out))
 
 
 def _account_monthly_flow(db: Session, account_id: int) -> tuple[Decimal, Decimal]:
@@ -184,6 +196,7 @@ def _to_out(db: Session, account: Account) -> dict:
         "entity_id": account.entity_id,
         "account_number": account.account_number,
         "notes": account.notes,
+        "transfer_patterns": account.transfer_patterns,
         "created_at": account.created_at,
         "balance": _account_balance(db, account),
         "cards": [CardMini.model_validate(c) for c in cards],
@@ -219,6 +232,7 @@ def create_account(
         initial_balance=payload.initial_balance or Decimal("0"),
         account_number=payload.account_number,
         notes=payload.notes,
+        transfer_patterns=payload.transfer_patterns,
     )
     db.add(account)
     db.commit()
@@ -262,7 +276,7 @@ def update_account(
     if payload.entity_id is not None:
         _verify_entity(db, payload.entity_id, current_user.id)
         account.entity_id = payload.entity_id
-    for field in ("name", "type", "currency", "initial_balance", "account_number", "notes"):
+    for field in ("name", "type", "currency", "initial_balance", "account_number", "notes", "transfer_patterns"):
         v = getattr(payload, field, None)
         if v is not None:
             setattr(account, field, v)
@@ -486,12 +500,29 @@ async def upload_statement(
         cat_index[key] = cat
         return cat.id
 
+    # Parse the account's transfer patterns once.
+    transfer_keywords: list[str] = []
+    if account.transfer_patterns:
+        transfer_keywords = [
+            p.strip().lower()
+            for p in re.split(r"[,\n]+", account.transfer_patterns)
+            if p.strip()
+        ]
+
+    def _is_transfer(text_desc: str | None) -> bool:
+        if not transfer_keywords or not text_desc:
+            return False
+        low = text_desc.lower()
+        return any(kw in low for kw in transfer_keywords)
+
     created = 0
+    transfers_flagged = 0
     by_category: dict[str, int] = {}
     by_month: dict[str, dict] = {}
-    by_type = {"INCOME": 0, "EXPENSE": 0}
+    by_type = {"INCOME": 0, "EXPENSE": 0, "TRANSFER": 0}
     income_total = 0.0
     expense_total = 0.0
+    transfer_total = 0.0
     for item in parsed:
         if not isinstance(item, dict):
             continue
@@ -517,7 +548,14 @@ async def upload_statement(
             continue
         if amount <= 0:
             continue
-        category_id = _resolve_category(cat_name, tx_type)
+        # If the line matches a configured transfer pattern on this account,
+        # demote EXPENSE → TRANSFER so it doesn't double-count with the
+        # merchant-side leg in the destination account.
+        if tx_type == TransactionType.EXPENSE and _is_transfer(desc):
+            tx_type = TransactionType.TRANSFER
+            transfers_flagged += 1
+            cat_name = None  # transfers aren't categorized
+        category_id = _resolve_category(cat_name, tx_type) if tx_type != TransactionType.TRANSFER else None
         db.add(Transaction(
             amount=amount,
             type=tx_type,
@@ -529,19 +567,27 @@ async def upload_statement(
             category_id=category_id,
         ))
         created += 1
-        if cat_name:
+        if cat_name and tx_type != TransactionType.TRANSFER:
             by_category[cat_name] = by_category.get(cat_name, 0) + 1
         if tx_type == TransactionType.INCOME:
             by_type["INCOME"] += 1
             income_total += amount
+        elif tx_type == TransactionType.TRANSFER:
+            by_type["TRANSFER"] += 1
+            transfer_total += amount
         else:
             by_type["EXPENSE"] += 1
             expense_total += amount
         month_key = tx_date.strftime("%Y-%m")
-        bucket = by_month.setdefault(month_key, {"count": 0, "income": 0.0, "expense": 0.0})
+        bucket = by_month.setdefault(
+            month_key,
+            {"count": 0, "income": 0.0, "expense": 0.0, "transfer": 0.0},
+        )
         bucket["count"] += 1
         if tx_type == TransactionType.INCOME:
             bucket["income"] += amount
+        elif tx_type == TransactionType.TRANSFER:
+            bucket["transfer"] += amount
         else:
             bucket["expense"] += amount
     db.commit()
@@ -550,6 +596,7 @@ async def upload_statement(
     return {
         "success": True,
         "imported": created,
+        "transfers_flagged": transfers_flagged,
         "chunks_processed": len(chunks) - failed_chunks - rate_limited_count,
         "chunks_total": len(chunks),
         "failed_chunks": failed_chunks,
@@ -559,5 +606,66 @@ async def upload_statement(
         "by_month": dict(sorted(by_month.items(), reverse=True)),
         "income_total": round(income_total, 2),
         "expense_total": round(expense_total, 2),
+        "transfer_total": round(transfer_total, 2),
         "account": _to_out(db, account),
+    }
+
+
+@router.post("/reconcile-transfers")
+def reconcile_transfers(
+    days_window: int = 3,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """For every unlinked TRANSFER row owned by this user, look for a matching
+    EXPENSE in a different account with the same amount within ±days_window
+    days. When exactly one candidate exists, link them via
+    transactions.linked_transaction_id."""
+    transfers = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.type == TransactionType.TRANSFER,
+            Transaction.linked_transaction_id.is_(None),
+        )
+        .all()
+    )
+    linked = 0
+    ambiguous = 0
+    no_match = 0
+    for t in transfers:
+        if not t.date or t.amount is None:
+            continue
+        lo = t.date - timedelta(days=days_window)
+        hi = t.date + timedelta(days=days_window)
+        # Amount must match within 1 cent.
+        candidates = (
+            db.query(Transaction)
+            .filter(
+                Transaction.user_id == current_user.id,
+                Transaction.type == TransactionType.EXPENSE,
+                Transaction.account_id != t.account_id,
+                Transaction.amount >= float(t.amount) - 0.01,
+                Transaction.amount <= float(t.amount) + 0.01,
+                Transaction.date >= lo,
+                Transaction.date <= hi,
+                Transaction.linked_transaction_id.is_(None),
+            )
+            .all()
+        )
+        if len(candidates) == 1:
+            other = candidates[0]
+            t.linked_transaction_id = other.id
+            other.linked_transaction_id = t.id
+            linked += 1
+        elif len(candidates) > 1:
+            ambiguous += 1
+        else:
+            no_match += 1
+    db.commit()
+    return {
+        "linked_pairs": linked,
+        "ambiguous": ambiguous,
+        "no_match": no_match,
+        "transfers_scanned": len(transfers),
     }

@@ -148,12 +148,18 @@ def transactions_summary(
         .filter(Transaction.type == TransactionType.EXPENSE)
         .scalar()
     )
+    transfer = (
+        base.with_entities(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(Transaction.type == TransactionType.TRANSFER)
+        .scalar()
+    )
     count = base.count()
 
     return TransactionSummary(
         income_total=Decimal(str(income or 0)),
         expense_total=Decimal(str(expense or 0)),
-        balance=Decimal(str((income or 0) - (expense or 0))),
+        transfer_total=Decimal(str(transfer or 0)),
+        balance=Decimal(str((income or 0) - (expense or 0))),  # transfers excluded
         transaction_count=count,
         period_start=start_date,
         period_end=end_date,

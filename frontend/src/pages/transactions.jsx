@@ -285,12 +285,13 @@ export default function TransactionsPage() {
   }, [scoped, search, filterType, filterRange, filterAccount, filterCategory]);
 
   const totals = useMemo(() => {
-    let inc = 0, exp = 0;
+    let inc = 0, exp = 0, trf = 0;
     filtered.forEach((t) => {
       if (t.type === "INCOME") inc += Number(t.amount);
+      else if (t.type === "TRANSFER") trf += Number(t.amount);
       else exp += Number(t.amount);
     });
-    return { inc, exp, balance: inc - exp };
+    return { inc, exp, trf, balance: inc - exp };
   }, [filtered]);
 
   const grouped = useMemo(() => {
@@ -455,10 +456,13 @@ export default function TransactionsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${totals.trf > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           <MiniStat label="Ingresos" value={fmt(totals.inc)} tone="emerald" />
           <MiniStat label="Gastos" value={fmt(totals.exp)} tone="rose" />
-          <MiniStat label="Balance" value={fmt(totals.balance)} tone={totals.balance >= 0 ? "indigo" : "rose"} />
+          <MiniStat label="Balance" value={fmt(totals.balance)} tone={totals.balance >= 0 ? "emerald" : "rose"} />
+          {totals.trf > 0 && (
+            <MiniStat label="Transferencias" value={fmt(totals.trf)} tone="amber" />
+          )}
         </div>
 
         <Tabs defaultValue="list">
@@ -498,9 +502,9 @@ export default function TransactionsPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex gap-1">
-                    {["ALL", "INCOME", "EXPENSE"].map((t) => (
+                    {["ALL", "INCOME", "EXPENSE", "TRANSFER"].map((t) => (
                       <FilterChip key={t} active={filterType === t} onClick={() => setFilterType(t)}>
-                        {t === "ALL" ? "Todo" : t === "INCOME" ? "Ingresos" : "Gastos"}
+                        {t === "ALL" ? "Todo" : t === "INCOME" ? "Ingresos" : t === "EXPENSE" ? "Gastos" : "Transferencias"}
                       </FilterChip>
                     ))}
                   </div>
@@ -608,7 +612,16 @@ export default function TransactionsPage() {
                                   : <Square size={14} className="text-muted-foreground/60 group-hover:text-muted-foreground" />}
                               </TableCell>
                               <TableCell className="font-mono text-xs text-muted-foreground">{(tx.date || "").slice(0, 10)}</TableCell>
-                              <TableCell className="font-medium">{tx.description || "—"}</TableCell>
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span>{tx.description || "—"}</span>
+                                  {tx.type === "TRANSFER" && (
+                                    <Badge variant="outline" className="gap-1 text-[10px] border-amber-500/40 text-amber-400">
+                                      <Repeat size={10} /> transferencia
+                                    </Badge>
+                                  )}
+                                </div>
+                              </TableCell>
                               <TableCell>
                                 {tx.category_id ? (
                                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -628,9 +641,13 @@ export default function TransactionsPage() {
                                 )}
                               </TableCell>
                               <TableCell className={`text-right font-mono font-semibold ${
-                                tx.type === "INCOME" ? "text-emerald-400" : "text-rose-400"
+                                tx.type === "INCOME"
+                                  ? "text-emerald-400"
+                                  : tx.type === "TRANSFER"
+                                    ? "text-amber-400"
+                                    : "text-rose-400"
                               }`}>
-                                {tx.type === "INCOME" ? "+" : "-"}{fmt(tx.amount).replace(/^-/, "")}
+                                {tx.type === "INCOME" ? "+" : tx.type === "TRANSFER" ? "↔ " : "-"}{fmt(tx.amount).replace(/^-/, "")}
                               </TableCell>
                               <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                                 <button
@@ -776,6 +793,7 @@ function MiniStat({ label, value, tone }) {
     emerald: "text-emerald-500",
     rose: "text-rose-500",
     indigo: "text-indigo-400",
+    amber: "text-amber-500",
   };
   return (
     <Card>

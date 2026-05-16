@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Wallet, Banknote, CreditCard, PiggyBank, Bitcoin, Building2,
-  Eye, EyeOff, Copy, Check, Upload, Sliders, FileText, TrendingUp, TrendingDown, X,
+  Eye, EyeOff, Copy, Check, Upload, Sliders, FileText, TrendingUp, TrendingDown, X, Repeat,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -41,6 +41,7 @@ const emptyForm = () => ({
   entity_id: "",
   account_number: "",
   notes: "",
+  transfer_patterns: "",
 });
 
 function maskNumber(num) {
@@ -114,6 +115,23 @@ export default function AccountsPage() {
   const [uploadResult, setUploadResult] = useState(null);
   const uploadInputRef = useRef(null);
 
+  // Reconcile transfers
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState(null);
+
+  const runReconcile = async () => {
+    setReconcileBusy(true);
+    setReconcileResult(null);
+    try {
+      const { data } = await api.post("/accounts/reconcile-transfers");
+      setReconcileResult(data);
+    } catch (err) {
+      setReconcileResult({ error: err.response?.data?.detail || err.message || "Error reconciliando" });
+    } finally {
+      setReconcileBusy(false);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -149,6 +167,7 @@ export default function AccountsPage() {
       entity_id: acc.entity_id ? String(acc.entity_id) : "",
       account_number: acc.account_number || "",
       notes: acc.notes || "",
+      transfer_patterns: acc.transfer_patterns || "",
     });
     setOpen(true);
   };
@@ -166,6 +185,7 @@ export default function AccountsPage() {
         entity_id: form.entity_id ? parseInt(form.entity_id, 10) : null,
         account_number: form.account_number.trim() || null,
         notes: form.notes.trim() || null,
+        transfer_patterns: form.transfer_patterns.trim() || null,
       };
       if (editing) {
         await api.put(`/accounts/${editing.id}`, payload);
@@ -283,7 +303,27 @@ export default function AccountsPage() {
               Bancos, tarjetas, efectivo y cripto en un solo lugar.
             </p>
           </div>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              onClick={runReconcile}
+              disabled={reconcileBusy}
+              className="gap-2"
+              title="Empareja cada transferencia con el gasto real en otra cuenta (mismo importe ±3 días)"
+            >
+              {reconcileBusy
+                ? <><Loader2 className="animate-spin" size={14} /> Reconciliando…</>
+                : <><Repeat size={14} /> Reconciliar transferencias</>}
+            </Button>
+            {reconcileResult && !reconcileResult.error && (
+              <span className="text-xs text-muted-foreground">
+                {reconcileResult.linked_pairs} pares vinculados · {reconcileResult.ambiguous} ambiguos · {reconcileResult.no_match} sin match
+              </span>
+            )}
+            {reconcileResult?.error && (
+              <span className="text-xs text-rose-400">{reconcileResult.error}</span>
+            )}
+            <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gap-2"><Plus size={16} /> Nueva cuenta</Button>
             </DialogTrigger>
@@ -378,6 +418,18 @@ export default function AccountsPage() {
                     onChange={(e) => setForm({ ...form, notes: e.target.value })}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="acc-transfer-patterns">Patrones de transferencia (opcional)</Label>
+                  <Input
+                    id="acc-transfer-patterns"
+                    placeholder="PAYPAL, BIZUM, AMZN PAYMENTS"
+                    value={form.transfer_patterns}
+                    onChange={(e) => setForm({ ...form, transfer_patterns: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Separados por coma. Cualquier movimiento importado cuya descripción contenga alguno de estos términos se marcará como <strong>Transferencia</strong> (no cuenta en Gastos, pero sigue restando del saldo de la cuenta). Útil cuando subes el extracto de PayPal por separado y no quieres que el cargo en La Caixa se duplique.
+                  </p>
+                </div>
                 {error && (
                   <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
                     <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
@@ -393,6 +445,7 @@ export default function AccountsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {error && !open && (
@@ -575,6 +628,11 @@ export default function AccountsPage() {
                   <Check size={16} className="flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <div>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</div>
+                    {uploadResult.transfers_flagged > 0 && (
+                      <div className="text-xs text-amber-300/90 mt-0.5">
+                        ↔ {uploadResult.transfers_flagged} marcadas como <strong>transferencias</strong> (no cuentan en Gastos). Pulsa "Reconciliar transferencias" arriba para vincularlas con el gasto real.
+                      </div>
+                    )}
                     {uploadResult.chunks_total > 1 && (
                       <div className="text-xs text-emerald-300/70 mt-0.5">
                         Procesados {uploadResult.chunks_processed}/{uploadResult.chunks_total} chunks

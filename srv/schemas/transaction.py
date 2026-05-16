@@ -14,6 +14,7 @@ class TransactionBase(BaseModel):
     category_id: int | None = None
     account_id: int | None = None
     entity_id: int | None = None
+    linked_transaction_id: int | None = None
 
 
 class TransactionCreate(TransactionBase):
@@ -28,6 +29,7 @@ class TransactionUpdate(BaseModel):
     category_id: int | None = None
     account_id: int | None = None
     entity_id: int | None = None
+    linked_transaction_id: int | None = None
 
 
 class TransactionOut(TransactionBase):
@@ -42,6 +44,7 @@ class TransactionOut(TransactionBase):
 class TransactionSummary(BaseModel):
     income_total: Decimal
     expense_total: Decimal
+    transfer_total: Decimal = Decimal("0")
     balance: Decimal
     transaction_count: int
     period_start: date_type | None = None

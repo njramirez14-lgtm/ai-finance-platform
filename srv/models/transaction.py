@@ -10,6 +10,7 @@ from srv.database.database import Base
 class TransactionType(str, enum.Enum):
     INCOME = "INCOME"
     EXPENSE = "EXPENSE"
+    TRANSFER = "TRANSFER"  # internal movement between accounts (e.g. PayPal → CaixaBank)
 
 
 class Transaction(Base):
@@ -29,3 +30,8 @@ class Transaction(Base):
 
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     entity_id = Column(Integer, ForeignKey("entities.id"), nullable=True)
+
+    # When this is the bank-side leg of a payment processor (e.g. CaixaBank charge
+    # for a PayPal purchase), points to the merchant-side transaction in the
+    # processor account. Allows showing both rows without double counting.
+    linked_transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)

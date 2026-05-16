@@ -16,6 +16,7 @@ class AccountBase(BaseModel):
     entity_id: int | None = None
     account_number: str | None = Field(default=None, max_length=64)
     notes: str | None = Field(default=None, max_length=500)
+    transfer_patterns: str | None = Field(default=None, max_length=500)
 
 
 class AccountCreate(AccountBase):
@@ -30,6 +31,7 @@ class AccountUpdate(BaseModel):
     entity_id: int | None = None
     account_number: str | None = Field(default=None, max_length=64)
     notes: str | None = Field(default=None, max_length=500)
+    transfer_patterns: str | None = Field(default=None, max_length=500)
 
 
 class CardMini(BaseModel):

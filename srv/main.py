@@ -4,7 +4,13 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from srv.core.config import settings
+from srv.database.auto_migrations import run_all as run_auto_migrations
+from srv.database.database import engine
 from srv.routers import account, ai, auth, backtest, card, category, entity, holding, liability, markets, smart_money, strategy, strategy_cron, subscription, telegram, transaction
+
+# Idempotent schema migrations on cold start (adds TRANSFER enum value,
+# transactions.linked_transaction_id, accounts.transfer_patterns).
+run_auto_migrations(engine)
 
 app = FastAPI(
     title="Personal Finance Dashboard API",
