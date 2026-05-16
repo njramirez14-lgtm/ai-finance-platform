@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime
 from decimal import Decimal
@@ -14,8 +15,11 @@ from srv.schemas.holding import HoldingCreate, HoldingOut, HoldingUpdate, TradeP
 
 router = APIRouter(prefix="/holdings", tags=["holdings"])
 
-FMP_API_KEY = os.getenv("FMP_API_KEY")
-FMP_BASE = "https://financialmodelingprep.com/api/v3"
+# Yahoo Finance public endpoints — no auth required, covers US, EU stocks,
+# ETFs (BME, Xetra…), crypto. The User-Agent header is required or Yahoo 403s.
+YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+YF_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+YF_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ai-finance/0.1)"}
 
 
 def _verify_account(db: Session, account_id: int | None, user_id: int) -> None:
@@ -34,10 +38,47 @@ _quotes_cache: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL_SEC = 60.0
 
 
+def _fetch_one_yahoo(symbol: str) -> dict | None:
+    """Single Yahoo Finance quote. Returns dict or None on any failure."""
+    try:
+        resp = httpx.get(
+            YF_CHART_URL.format(symbol=symbol),
+            params={"interval": "1d", "range": "5d"},
+            headers=YF_HEADERS,
+            timeout=8.0,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        result = (data.get("chart") or {}).get("result") or []
+        if not result:
+            return None
+        meta = result[0].get("meta") or {}
+        price = meta.get("regularMarketPrice")
+        prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+        if price is None:
+            return None
+        try:
+            change_pct = ((float(price) - float(prev)) / float(prev) * 100) if prev else None
+            change_abs = (float(price) - float(prev)) if prev else None
+        except (TypeError, ValueError):
+            change_pct = None
+            change_abs = None
+        return {
+            "price": float(price),
+            "change": change_abs,
+            "changesPercentage": change_pct,
+            "name": meta.get("longName") or meta.get("shortName"),
+            "currency": meta.get("currency"),
+        }
+    except Exception:
+        return None
+
+
 def _fetch_quotes(symbols: list[str]) -> dict[str, dict]:
-    """Fetch live quotes from FMP. Returns dict keyed by symbol with price + change.
-    Caches in-process for 60 seconds to avoid hammering FMP."""
-    if not symbols or not FMP_API_KEY:
+    """Fetch live quotes from Yahoo Finance. Caches per-symbol 60s in-process.
+    Runs symbols in parallel via httpx within an asyncio loop."""
+    if not symbols:
         return {}
     now = datetime.utcnow().timestamp()
     fresh: dict[str, dict] = {}
@@ -49,25 +90,33 @@ def _fetch_quotes(symbols: list[str]) -> dict[str, dict]:
         else:
             to_fetch.append(s)
     if to_fetch:
+        async def _gather() -> dict[str, dict]:
+            sem = asyncio.Semaphore(10)
+            async def _one(sym: str):
+                async with sem:
+                    return sym, await asyncio.to_thread(_fetch_one_yahoo, sym)
+            tasks = [_one(s) for s in to_fetch]
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+            return {s: q for s, q in results if q is not None}
         try:
-            url = f"{FMP_BASE}/quote/{','.join(to_fetch)}"
-            resp = httpx.get(url, params={"apikey": FMP_API_KEY}, timeout=10.0)
-            if resp.status_code == 200:
-                data = resp.json() or []
-                for item in data:
-                    sym = item.get("symbol")
-                    if not sym:
-                        continue
-                    quote = {
-                        "price": item.get("price"),
-                        "change": item.get("change"),
-                        "changesPercentage": item.get("changesPercentage"),
-                        "name": item.get("name"),
-                    }
-                    _quotes_cache[sym] = (now, quote)
-                    fresh[sym] = quote
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're inside an async context (FastAPI route is async-friendly);
+                    # use run_until_complete only when there's no loop. Otherwise
+                    # fall back to sequential as last resort.
+                    raise RuntimeError("inside async loop")
+                results = loop.run_until_complete(_gather())
+            except RuntimeError:
+                # Either no loop, or we're inside one; create a fresh loop in a thread.
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    results = ex.submit(asyncio.run, _gather()).result()
         except Exception:
-            pass
+            results = {}
+        for sym, quote in results.items():
+            _quotes_cache[sym] = (now, quote)
+            fresh[sym] = quote
     return fresh
 
 
@@ -319,16 +368,32 @@ def search_symbol(
     query: str,
     current_user=Depends(get_current_user),
 ):
-    """Search FMP for matching symbols/names. Returns up to 10 results."""
-    if not FMP_API_KEY:
-        raise HTTPException(status_code=500, detail="FMP_API_KEY no configurada")
+    """Search Yahoo Finance for matching symbols/names. Returns up to 10 results."""
     if len(query) < 1:
         return []
     try:
-        url = f"{FMP_BASE}/search"
-        resp = httpx.get(url, params={"query": query, "limit": 10, "apikey": FMP_API_KEY}, timeout=10.0)
+        resp = httpx.get(
+            YF_SEARCH_URL,
+            params={"q": query, "quotesCount": 10, "newsCount": 0},
+            headers=YF_HEADERS,
+            timeout=8.0,
+        )
         if resp.status_code != 200:
             return []
-        return resp.json() or []
+        data = resp.json() or {}
+        quotes = data.get("quotes") or []
+        # Normalize to the shape the frontend expects (symbol/name/exchange).
+        return [
+            {
+                "symbol": q.get("symbol"),
+                "name": q.get("shortname") or q.get("longname") or q.get("symbol"),
+                "exchangeShortName": q.get("exchange") or q.get("exchDisp"),
+                "exchange": q.get("exchDisp") or q.get("exchange"),
+                "currency": q.get("currency"),
+                "quoteType": q.get("quoteType"),
+            }
+            for q in quotes
+            if q.get("symbol")
+        ]
     except Exception:
         return []

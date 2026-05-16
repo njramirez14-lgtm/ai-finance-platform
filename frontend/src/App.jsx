@@ -19,6 +19,7 @@ import CardsPage from "./pages/cards";
 import SubscriptionsPage from "./pages/subscriptions";
 import BacktestPage from "./pages/backtest";
 import StrategyPage from "./pages/strategy";
+import PortfolioPage from "./pages/portfolio";
 import ProtectedRoute from "./components/protected-routes";
 import { ThemeProvider } from "./components/theme-provider";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -166,6 +167,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <TradingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/portfolio"
+            element={
+              <ProtectedRoute>
+                <PortfolioPage />
               </ProtectedRoute>
             }
           />

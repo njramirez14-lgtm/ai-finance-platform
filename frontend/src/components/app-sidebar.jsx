@@ -15,6 +15,7 @@ import {
   FlaskConical,
   Target,
   Crown,
+  TrendingUp,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -74,6 +75,11 @@ export function AppSidebar({ ...props }) {
         title: "Entidades",
         url: "/entities",
         icon: Building2,
+      },
+      {
+        title: "Cartera",
+        url: "/portfolio",
+        icon: TrendingUp,
       },
       {
         title: "Categorías",
