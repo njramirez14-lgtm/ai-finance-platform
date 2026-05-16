@@ -540,21 +540,30 @@ export default function AccountsPage() {
             <input
               ref={uploadInputRef}
               type="file"
-              accept=".csv,.txt,.tsv,text/*"
+              accept=".csv,.txt,.tsv,.pdf,.xlsx,.xlsm,text/*,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="block w-full text-sm file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 cursor-pointer"
               onChange={handleFile}
               disabled={uploadBusy}
             />
             {uploadBusy && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Procesando con IA…
+                <Loader2 className="h-4 w-4 animate-spin" /> Procesando en chunks de ~100 líneas…
               </div>
             )}
             {uploadResult && uploadResult.success && (
               <div className="space-y-3 p-3 rounded-md text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <div className="flex items-start gap-2">
                   <Check size={16} className="flex-shrink-0 mt-0.5" />
-                  <span>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</span>
+                  <div className="flex-1">
+                    <div>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</div>
+                    {uploadResult.chunks_total > 1 && (
+                      <div className="text-xs text-emerald-300/70 mt-0.5">
+                        Procesados {uploadResult.chunks_processed}/{uploadResult.chunks_total} chunks
+                        {uploadResult.failed_chunks > 0 && ` · ${uploadResult.failed_chunks} fallaron`}
+                        {uploadResult.rate_limited && " · cuota Gemini agotada (vuelve a probar en unos minutos)"}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {(uploadResult.income_total > 0 || uploadResult.expense_total > 0) && (
@@ -622,7 +631,7 @@ export default function AccountsPage() {
             )}
             <div className="text-xs text-muted-foreground flex items-start gap-2">
               <FileText size={12} className="mt-0.5 flex-shrink-0" />
-              <span>Formatos: CSV o texto plano. Máx 5 MB.</span>
+              <span>Formatos: <strong>CSV, TXT, PDF, XLSX</strong>. Máx 8 MB. Se procesa en chunks de ~100 líneas para máxima fiabilidad.</span>
             </div>
           </div>
           <DialogFooter>

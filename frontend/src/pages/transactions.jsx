@@ -680,7 +680,7 @@ function UploadStatement({ accounts, onSaved }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><UploadCloud size={18} /> Subir extracto bancario</CardTitle>
         <CardDescription>
-          La IA extrae los movimientos del CSV/texto y los categoriza automáticamente (Mercadona → Alimentación, Netflix → Suscripciones, etc.).
+          Acepta <strong>CSV, TXT, PDF y Excel (XLSX)</strong>. Se procesa en chunks de ~100 líneas para evitar cortes y errores de cuota. La IA extrae los movimientos y los categoriza (Mercadona → Alimentación, Netflix → Suscripciones, etc.).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -703,7 +703,7 @@ function UploadStatement({ accounts, onSaved }) {
             type="file"
             id="stmt-upload"
             className="hidden"
-            accept=".csv,.txt,.tsv,text/*"
+            accept=".csv,.txt,.tsv,.pdf,.xlsx,.xlsm,text/*,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); setResult(null); }}
           />
           <label
@@ -726,7 +726,16 @@ function UploadStatement({ accounts, onSaved }) {
           <div className="space-y-3 p-3 rounded-md text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <div className="flex items-start gap-2">
               <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5" />
-              <span>Importadas <strong>{result.imported}</strong> transacciones con categorías asignadas por IA.</span>
+              <div className="flex-1">
+                <div>Importadas <strong>{result.imported}</strong> transacciones con categorías asignadas por IA.</div>
+                {result.chunks_total > 1 && (
+                  <div className="text-xs text-emerald-300/70 mt-0.5">
+                    Procesados {result.chunks_processed}/{result.chunks_total} chunks
+                    {result.failed_chunks > 0 && ` · ${result.failed_chunks} fallaron`}
+                    {result.rate_limited && " · cuota Gemini agotada (vuelve a probar en unos minutos)"}
+                  </div>
+                )}
+              </div>
             </div>
 
             {(result.income_total > 0 || result.expense_total > 0) && (

@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -25,8 +27,77 @@ from srv.schemas.account import (
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+CHUNK_LINES = 100  # ~1 month of typical statements per chunk
+HEADER_RE = re.compile(
+    r"(fecha|date|importe|amount|concepto|description|saldo|balance|operaci[oó]n|movimiento)",
+    re.IGNORECASE,
+)
+
+
+def _read_file_as_text(content: bytes, filename: str, mime: str) -> str:
+    """Convert upload (PDF / Excel / CSV / text) to plain line-oriented text."""
+    name = (filename or "").lower()
+    mime_l = (mime or "").lower()
+
+    if name.endswith(".pdf") or "pdf" in mime_l:
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:
+            raise HTTPException(status_code=500, detail="pypdf no instalado") from exc
+        try:
+            reader = PdfReader(io.BytesIO(content))
+            return "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"PDF ilegible: {exc}")
+
+    if name.endswith((".xlsx", ".xlsm")) or "spreadsheet" in mime_l:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise HTTPException(status_code=500, detail="openpyxl no instalado") from exc
+        try:
+            wb = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+            rows: list[str] = []
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                for row in ws.iter_rows(values_only=True):
+                    rows.append("\t".join("" if v is None else str(v) for v in row))
+            return "\n".join(rows)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Excel ilegible: {exc}")
+
+    # Default: treat as text / CSV / TSV
+    return content.decode("utf-8", errors="ignore")
+
+
+def _chunk_text(text: str, max_lines: int = CHUNK_LINES) -> list[str]:
+    """Split text into ≤ max_lines chunks, preserving any column header line."""
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if not lines:
+        return []
+    if len(lines) <= max_lines:
+        return ["\n".join(lines)]
+    first_line = lines[0]
+    has_header = bool(HEADER_RE.search(first_line)) and len(first_line) < 300
+    body = lines[1:] if has_header else lines
+    chunks: list[str] = []
+    for i in range(0, len(body), max_lines):
+        chunk_lines = ([first_line] if has_header else []) + body[i : i + max_lines]
+        chunks.append("\n".join(chunk_lines))
+    return chunks
+
+
+def _extract_one(model, prompt: str) -> list[dict]:
+    """Call Gemini once. Returns parsed list (or raises)."""
+    response = model.generate_content(prompt)
+    raw = (response.text or "").strip()
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    if not cleaned:
+        return []
+    parsed = json.loads(cleaned)
+    return parsed if isinstance(parsed, list) else []
 
 
 def _verify_entity(db: Session, entity_id: int | None, user_id: int) -> None:
@@ -243,35 +314,8 @@ def adjust_balance(
     return _to_out(db, account)
 
 
-@router.post("/{account_id}/upload-statement")
-async def upload_statement(
-    account_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """Parse a bank statement with Gemini and persist transactions linked to this account."""
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API Key not configured")
-
-    account = _get_owned_account(db, account_id, current_user.id)
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 5 MB)")
-
-    text_content = content.decode("utf-8", errors="ignore")
-    # Gemini Flash supports ~1M tokens input. 200k chars ≈ 50k tokens, plenty
-    # of headroom for a full year of typical bank statements.
-    if len(text_content) > 200000:
-        text_content = text_content[:200000]
-
-    import google.generativeai as genai
-
-    genai.configure(api_key=GEMINI_API_KEY)
-
-    prompt = f"""
-Eres un experto extractor y categorizador de transacciones bancarias en España.
-Analiza el siguiente texto (CSV o extracto en texto) y devuelve UN JSON ARRAY (sin markdown) con esta estructura:
+PROMPT_TEMPLATE = """Eres un experto extractor y categorizador de transacciones bancarias en España.
+Analiza el siguiente texto y devuelve UN JSON ARRAY (sin markdown) con esta estructura:
 [
   {{
     "amount": 100.50,
@@ -309,37 +353,68 @@ Reglas:
 - Si no encuentras transacciones devuelve [].
 
 Texto:
-{text_content}
+{text}
 """
 
-    try:
-        model = genai.GenerativeModel(
-            "gemini-flash-latest",
-            generation_config={
-                "temperature": 0.1,
-                "max_output_tokens": 65536,
-                "response_mime_type": "application/json",
-            },
+
+@router.post("/{account_id}/upload-statement")
+async def upload_statement(
+    account_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Parse a bank statement (CSV, TXT, PDF, XLSX) chunk-by-chunk with Gemini
+    and persist transactions linked to this account. Resilient: partial chunk
+    failures still commit the rest."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API Key not configured")
+
+    account = _get_owned_account(db, account_id, current_user.id)
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 8 MB)")
+
+    text_content = _read_file_as_text(content, file.filename or "", file.content_type or "")
+    if not text_content.strip():
+        raise HTTPException(status_code=400, detail="No se ha podido extraer texto del archivo")
+
+    chunks = _chunk_text(text_content, max_lines=CHUNK_LINES)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No hay líneas reconocibles")
+
+    import google.generativeai as genai
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        "gemini-flash-latest",
+        generation_config={
+            "temperature": 0.1,
+            "max_output_tokens": 32768,
+            "response_mime_type": "application/json",
+        },
+    )
+
+    parsed: list[dict] = []
+    failed_chunks = 0
+    rate_limited = False
+    for chunk_text in chunks:
+        prompt = PROMPT_TEMPLATE.format(text=chunk_text)
+        try:
+            parsed.extend(_extract_one(model, prompt))
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+                rate_limited = True
+                break  # Stop processing further chunks but commit what we have
+            failed_chunks += 1
+            continue
+
+    if not parsed and rate_limited:
+        raise HTTPException(
+            status_code=429,
+            detail="Has agotado la cuota gratuita de Gemini. Espera unos minutos o usa una API key de pago.",
         )
-        response = model.generate_content(prompt)
-        raw = (response.text or "").strip()
-    except Exception as exc:
-        msg = str(exc)
-        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-            raise HTTPException(
-                status_code=429,
-                detail="Has agotado la cuota gratuita de Gemini. Espera unos minutos o usa una API key de pago.",
-            )
-        raise HTTPException(status_code=502, detail=f"Error consultando el modelo: {exc}")
-
-    cleaned = raw.replace("```json", "").replace("```", "").strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="No se pudo parsear la respuesta del extracto")
-
-    if not isinstance(parsed, list):
-        raise HTTPException(status_code=502, detail="Formato inesperado del extracto")
 
     # Preload categories for matching, keyed by lowercase name + type
     existing_categories = (
@@ -447,6 +522,10 @@ Texto:
     return {
         "success": True,
         "imported": created,
+        "chunks_processed": len(chunks) - (1 if rate_limited else 0),
+        "chunks_total": len(chunks),
+        "failed_chunks": failed_chunks,
+        "rate_limited": rate_limited,
         "by_category": by_category,
         "by_type": by_type,
         "by_month": dict(sorted(by_month.items(), reverse=True)),
