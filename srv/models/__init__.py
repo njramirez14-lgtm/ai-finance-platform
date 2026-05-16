@@ -3,6 +3,7 @@ from srv.models.card import Card
 from srv.models.category import Category
 from srv.models.chat import ChatMessage, ChatSummary
 from srv.models.entity import Entity, EntityType
+from srv.models.holding import Holding
 from srv.models.liability import Liability
 from srv.models.settings import Settings
 from srv.models.smart_money_trade import SmartMoneyTrade
@@ -21,6 +22,7 @@ __all__ = [
     "ChatSummary",
     "Entity",
     "EntityType",
+    "Holding",
     "InvestmentPlan",
     "Liability",
     "MarketAlert",

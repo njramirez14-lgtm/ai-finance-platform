@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -90,7 +91,7 @@ def _chunk_text(text: str, max_lines: int = CHUNK_LINES) -> list[str]:
 
 
 def _extract_one(model, prompt: str) -> list[dict]:
-    """Call Gemini once. Returns parsed list (or raises)."""
+    """Call Gemini once (sync). Returns parsed list (or raises)."""
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
     cleaned = raw.replace("```json", "").replace("```", "").strip()
@@ -98,6 +99,20 @@ def _extract_one(model, prompt: str) -> list[dict]:
         return []
     parsed = json.loads(cleaned)
     return parsed if isinstance(parsed, list) else []
+
+
+async def _extract_one_async(model, prompt: str, sem: asyncio.Semaphore) -> tuple[list[dict], str | None]:
+    """Async variant with a concurrency semaphore.
+    Returns (rows, error_kind). error_kind in {None, 'rate_limit', 'other'}."""
+    async with sem:
+        try:
+            rows = await asyncio.to_thread(_extract_one, model, prompt)
+            return rows, None
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+                return [], "rate_limit"
+            return [], "other"
 
 
 def _verify_entity(db: Session, entity_id: int | None, user_id: int) -> None:
@@ -395,20 +410,32 @@ async def upload_statement(
         },
     )
 
+    # Process chunks in parallel with a small concurrency cap. Vercel kills the
+    # function at 60s, so we need throughput; the free Gemini tier allows ~15 RPM
+    # so 5 parallel calls + ~3s/chunk fits comfortably under both limits.
+    MAX_CONCURRENCY = 5
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    tasks = [
+        _extract_one_async(model, PROMPT_TEMPLATE.format(text=ct), sem)
+        for ct in chunks
+    ]
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=50.0)
+    except asyncio.TimeoutError:
+        # Something hung; collect whatever finished
+        results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
+
     parsed: list[dict] = []
     failed_chunks = 0
     rate_limited = False
-    for chunk_text in chunks:
-        prompt = PROMPT_TEMPLATE.format(text=chunk_text)
-        try:
-            parsed.extend(_extract_one(model, prompt))
-        except Exception as exc:
-            msg = str(exc)
-            if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-                rate_limited = True
-                break  # Stop processing further chunks but commit what we have
+    for rows, err in results:
+        if err == "rate_limit":
+            rate_limited = True
+            continue
+        if err == "other":
             failed_chunks += 1
             continue
+        parsed.extend(rows)
 
     if not parsed and rate_limited:
         raise HTTPException(
@@ -519,10 +546,11 @@ async def upload_statement(
             bucket["expense"] += amount
     db.commit()
     db.refresh(account)
+    rate_limited_count = sum(1 for _, e in results if e == "rate_limit")
     return {
         "success": True,
         "imported": created,
-        "chunks_processed": len(chunks) - (1 if rate_limited else 0),
+        "chunks_processed": len(chunks) - failed_chunks - rate_limited_count,
         "chunks_total": len(chunks),
         "failed_chunks": failed_chunks,
         "rate_limited": rate_limited,

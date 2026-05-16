@@ -4,7 +4,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from srv.core.config import settings
-from srv.routers import account, ai, auth, backtest, card, category, entity, liability, markets, smart_money, strategy, strategy_cron, subscription, telegram, transaction
+from srv.routers import account, ai, auth, backtest, card, category, entity, holding, liability, markets, smart_money, strategy, strategy_cron, subscription, telegram, transaction
 
 app = FastAPI(
     title="Personal Finance Dashboard API",
@@ -50,6 +50,7 @@ api.include_router(telegram.router)
 api.include_router(ai.router)
 api.include_router(strategy.router)
 api.include_router(strategy_cron.router)
+api.include_router(holding.router)
 app.include_router(api)
 
 
