@@ -401,3 +401,107 @@ def detect_subscriptions(
         "candidates": candidates,
         "unmatched_existing": unmatched_existing,
     }
+
+
+@router.post("/bulk-create-subscriptions")
+def bulk_create_subscriptions(
+    ids: list[int] = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Take a list of transaction IDs, group them by normalized merchant
+    name, and create one ACTIVE subscription per unique group. When the
+    group has 2+ transactions, infer the billing cycle from the average
+    gap (defaults to MONTHLY otherwise). Skips groups that already match
+    an existing subscription so re-clicking is safe."""
+    if not ids:
+        return {"created": 0, "skipped_existing": 0, "skipped_no_amount": 0}
+
+    txs = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.id.in_(ids),
+        )
+        .order_by(Transaction.date.asc())
+        .all()
+    )
+    if not txs:
+        return {"created": 0, "skipped_existing": 0, "skipped_no_amount": 0}
+
+    existing_keys = {
+        _normalize_merchant(s.name)
+        for s in db.query(Subscription).filter(Subscription.user_id == current_user.id).all()
+    }
+
+    groups: dict[str, list[Transaction]] = defaultdict(list)
+    for t in txs:
+        key = _normalize_merchant(t.description) or (t.description or "").lower()[:80]
+        if not key:
+            continue
+        groups[key].append(t)
+
+    today = date_type.today()
+    created = 0
+    skipped_existing = 0
+    skipped_no_amount = 0
+    created_subs = []
+    for key, group in groups.items():
+        if key in existing_keys:
+            skipped_existing += 1
+            continue
+        group.sort(key=lambda t: t.date)
+        sample = group[-1]
+        amount = float(sample.amount or 0)
+        if amount <= 0:
+            skipped_no_amount += 1
+            continue
+
+        # Infer cycle from gaps when we have 2+ datapoints.
+        cycle = "MONTHLY"
+        if len(group) >= 2:
+            gaps = [
+                (group[i].date - group[i - 1].date).days
+                for i in range(1, len(group))
+            ]
+            avg_gap = sum(gaps) / len(gaps)
+            inferred = _classify_cycle(avg_gap)
+            if inferred:
+                cycle = inferred
+
+        last_date = sample.date.date() if isinstance(sample.date, datetime) else sample.date
+        next_days = {"WEEKLY": 7, "MONTHLY": 30, "QUARTERLY": 90, "YEARLY": 365, "CUSTOM": 30}[cycle]
+        next_charge = last_date + timedelta(days=next_days)
+        if next_charge < today:
+            next_charge = today + timedelta(days=1)
+
+        sub = Subscription(
+            user_id=current_user.id,
+            name=(sample.description or key.title())[:160],
+            amount=Decimal(str(round(amount, 2))),
+            currency="EUR",
+            billing_cycle=cycle,
+            next_charge_date=next_charge,
+            started_at=(group[0].date.date() if isinstance(group[0].date, datetime) else group[0].date),
+            status="ACTIVE",
+            category_id=sample.category_id,
+            account_id=sample.account_id,
+            entity_id=sample.entity_id,
+        )
+        db.add(sub)
+        existing_keys.add(key)
+        created += 1
+        created_subs.append({
+            "name": sub.name,
+            "amount": float(sub.amount),
+            "billing_cycle": cycle,
+        })
+
+    db.commit()
+    return {
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "skipped_no_amount": skipped_no_amount,
+        "groups_total": len(groups),
+        "created_subs": created_subs,
+    }

@@ -85,6 +85,7 @@ export default function TransactionsPage() {
   // Multi-select
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkSubBusy, setBulkSubBusy] = useState(false);
 
   // Expense analyzer
   const [analyzerOpen, setAnalyzerOpen] = useState(false);
@@ -264,6 +265,26 @@ export default function TransactionsPage() {
       setError(err.response?.data?.detail || "Error borrando en bloque");
     } finally {
       setBulkBusy(false);
+    }
+  };
+
+  const bulkCreateSubscriptions = async () => {
+    if (selected.size === 0) return;
+    setBulkSubBusy(true);
+    try {
+      const { data } = await api.post("/transactions/bulk-create-subscriptions", {
+        ids: Array.from(selected),
+      });
+      const parts = [];
+      if (data.created) parts.push(`${data.created} creadas`);
+      if (data.skipped_existing) parts.push(`${data.skipped_existing} ya existían`);
+      if (data.skipped_no_amount) parts.push(`${data.skipped_no_amount} sin importe`);
+      window.alert(parts.length ? parts.join(" · ") : "No se creó ninguna suscripción");
+      clearSelection();
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || "Error creando suscripciones");
+    } finally {
+      setBulkSubBusy(false);
     }
   };
 
@@ -687,9 +708,21 @@ export default function TransactionsPage() {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            onClick={bulkCreateSubscriptions}
+            disabled={bulkSubBusy || bulkBusy}
+            className="gap-1.5"
+            title="Crea una suscripción por cada comercio único (deduplica por nombre)"
+          >
+            {bulkSubBusy
+              ? <><Loader2 size={14} className="animate-spin" /> Creando…</>
+              : <><Repeat size={14} /> Crear suscripciones</>}
+          </Button>
+          <Button
+            size="sm"
             variant="destructive"
             onClick={bulkDelete}
-            disabled={bulkBusy}
+            disabled={bulkBusy || bulkSubBusy}
             className="gap-1.5"
           >
             {bulkBusy
