@@ -73,6 +73,32 @@ def _read_file_as_text(content: bytes, filename: str, mime: str) -> str:
     return content.decode("utf-8", errors="ignore")
 
 
+def _split_pdf_into_chunks(content: bytes, pages_per_chunk: int = 3) -> list[bytes]:
+    """Split a PDF byte blob into multiple smaller PDF byte blobs of at most
+    `pages_per_chunk` pages each. Used so Gemini Vision doesn't truncate the
+    JSON output on long statements."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError:
+        return [content]
+    try:
+        reader = PdfReader(io.BytesIO(content))
+    except Exception:
+        return [content]
+    total = len(reader.pages)
+    if total <= pages_per_chunk:
+        return [content]
+    out: list[bytes] = []
+    for start in range(0, total, pages_per_chunk):
+        writer = PdfWriter()
+        for i in range(start, min(start + pages_per_chunk, total)):
+            writer.add_page(reader.pages[i])
+        buf = io.BytesIO()
+        writer.write(buf)
+        out.append(buf.getvalue())
+    return out
+
+
 def _chunk_text(text: str, max_lines: int = CHUNK_LINES) -> list[str]:
     """Split text into ≤ max_lines chunks, preserving any column header line."""
     lines = [ln for ln in text.split("\n") if ln.strip()]
@@ -422,28 +448,43 @@ async def upload_statement(
     )
 
     # If text extraction failed (scanned / compressed PDF that stripped the
-    # text layer), send the raw PDF to Gemini Vision instead.
+    # text layer), send the raw PDF to Gemini Vision page-by-page so each
+    # chunk's JSON output stays well under the 32k-token cap.
     used_vision = False
     if is_pdf and len(text_content.strip()) < 100:
-        try:
-            vision_response = await asyncio.to_thread(
-                model.generate_content,
-                [
-                    {"mime_type": "application/pdf", "data": content},
+        pdf_chunks = _split_pdf_into_chunks(content, pages_per_chunk=3)
+
+        async def _vision_one(pdf_bytes: bytes, sem: asyncio.Semaphore) -> tuple[list[dict], str | None]:
+            def _call() -> list[dict]:
+                resp = model.generate_content([
+                    {"mime_type": "application/pdf", "data": pdf_bytes},
                     PROMPT_TEMPLATE.format(text="(see attached PDF)"),
-                ],
-            )
-            raw = (vision_response.text or "").strip().replace("```json", "").replace("```", "").strip()
-            parsed = json.loads(raw) if raw else []
-            if not isinstance(parsed, list):
-                parsed = []
-            used_vision = True
-            chunks = ["(pdf-vision)"]
-            results = [(parsed, None)]
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=502, detail=f"Gemini Vision devolvió JSON inválido: {exc}")
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Gemini Vision falló al leer el PDF: {exc}")
+                ])
+                raw = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+                if not raw:
+                    return []
+                data = json.loads(raw)
+                return data if isinstance(data, list) else []
+            async with sem:
+                try:
+                    rows = await asyncio.to_thread(_call)
+                    return rows, None
+                except json.JSONDecodeError:
+                    return [], "other"
+                except Exception as exc:
+                    msg = str(exc)
+                    if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+                        return [], "rate_limit"
+                    return [], "other"
+
+        sem = asyncio.Semaphore(10)
+        tasks = [_vision_one(c, sem) for c in pdf_chunks]
+        try:
+            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
+        except asyncio.TimeoutError:
+            results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
+        used_vision = True
+        chunks = [f"(pdf-vision page {i*3+1})" for i in range(len(pdf_chunks))]
     else:
         if not text_content.strip():
             raise HTTPException(
