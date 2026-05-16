@@ -1,7 +1,10 @@
+import asyncio
+import json
+import os
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -12,6 +15,12 @@ from srv.models.account import Account
 from srv.models.entity import Entity
 from srv.models.liability import Liability
 from srv.models.transaction import Transaction, TransactionType
+from srv.routers.account import (
+    GEMINI_API_KEY,
+    MAX_UPLOAD_BYTES,
+    _read_file_as_text,
+    _split_pdf_into_chunks,
+)
 from srv.schemas.liability import (
     LiabilityCreate,
     LiabilityOut,
@@ -200,3 +209,143 @@ def register_payment(
     db.commit()
     db.refresh(liability)
     return liability
+
+
+LOAN_ANALYSIS_PROMPT = """Eres un experto analizando documentos de préstamos e hipotecas en España (cuadros de amortización,
+extractos del banco con cuotas, escrituras, certificados de deuda).
+
+Analiza el documento adjunto y devuelve UN JSON OBJECT (sin markdown) con esta estructura exacta:
+{
+  "monthly_payment": 1234.56 | null,
+  "interest_rate_annual": 3.45 | null,
+  "interest_rate_kind": "TIN" | "TAE" | null,
+  "current_balance": 123456.78 | null,
+  "original_amount": 200000 | null,
+  "start_date": "YYYY-MM-DD" | null,
+  "end_date": "YYYY-MM-DD" | null,
+  "term_months": 240 | null,
+  "remaining_months": 180 | null,
+  "lender": "BBVA" | null,
+  "loan_type": "MORTGAGE" | "LOAN" | "CREDIT_CARD" | "LINE_OF_CREDIT" | "STUDENT" | "OTHER" | null,
+  "payments_paid": 60 | null,
+  "total_interest_paid": 12345.67 | null,
+  "total_interest_remaining": 23456.78 | null,
+  "confidence": "high" | "medium" | "low",
+  "summary": "Texto breve (1-3 frases) en español explicando qué has detectado y observaciones útiles."
+}
+
+Reglas:
+- Si un campo no aparece o no puedes calcularlo con certeza razonable, ponlo a null. NO inventes.
+- monthly_payment: cuota que más se repita (moda), no la media.
+- interest_rate_annual: porcentaje anual, no decimal (3.45 no 0.0345).
+- current_balance: "Capital pendiente" o "Saldo pendiente" del período más reciente.
+- term_months y remaining_months pueden deducirse contando filas del cuadro de amortización.
+- summary debe servir al usuario, ej.: "Cuadro de amortización a 240 cuotas, pagadas 60, quedan 180. Cuota fija 845€, TIN 2.95%, capital pendiente 152.300€."
+"""
+
+
+class LiabilityAnalysisResponse(BaseModel):
+    monthly_payment: Decimal | None = None
+    interest_rate_annual: Decimal | None = None
+    interest_rate_kind: str | None = None
+    current_balance: Decimal | None = None
+    original_amount: Decimal | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    term_months: int | None = None
+    remaining_months: int | None = None
+    lender: str | None = None
+    loan_type: str | None = None
+    payments_paid: int | None = None
+    total_interest_paid: Decimal | None = None
+    total_interest_remaining: Decimal | None = None
+    confidence: str | None = None
+    summary: str | None = None
+    used_vision: bool = False
+
+
+@router.post("/{liability_id}/analyze-statement", response_model=LiabilityAnalysisResponse)
+async def analyze_liability_statement(
+    liability_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Analyze a loan/mortgage document and return suggested values. This
+    endpoint DOES NOT mutate the liability — the frontend reviews the
+    suggestions and PUTs them via the normal update endpoint."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API Key no configurada")
+
+    liability = (
+        db.query(Liability)
+        .filter(Liability.id == liability_id, Liability.user_id == current_user.id)
+        .first()
+    )
+    if not liability:
+        raise HTTPException(status_code=404, detail="Liability not found")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande")
+
+    name_l = (file.filename or "").lower()
+    mime_l = (file.content_type or "").lower()
+    is_pdf = name_l.endswith(".pdf") or "pdf" in mime_l
+
+    text_content = _read_file_as_text(content, file.filename or "", file.content_type or "")
+
+    import google.generativeai as genai
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        generation_config={
+            "temperature": 0.1,
+            "max_output_tokens": 8192,
+            "response_mime_type": "application/json",
+        },
+    )
+
+    used_vision = False
+    try:
+        if is_pdf and len(text_content.strip()) < 100:
+            # Vision path: the schedule usually repeats, so the first 8 pages
+            # are enough for header info + early/late installments.
+            pdf_chunks = _split_pdf_into_chunks(content, pages_per_chunk=8)
+            primary = pdf_chunks[0] if pdf_chunks else content
+            resp = await asyncio.to_thread(
+                model.generate_content,
+                [
+                    {"mime_type": "application/pdf", "data": primary},
+                    LOAN_ANALYSIS_PROMPT,
+                ],
+            )
+            used_vision = True
+        else:
+            if not text_content.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se ha podido extraer texto del archivo. Si es un PDF escaneado, vuelve a exportarlo del banco.",
+                )
+            trimmed = text_content[:120_000]
+            resp = await asyncio.to_thread(
+                model.generate_content,
+                LOAN_ANALYSIS_PROMPT + "\n\nDocumento:\n" + trimmed,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini falló analizando el documento: {exc}")
+
+    raw = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+    if not raw:
+        raise HTTPException(status_code=502, detail="Gemini no devolvió respuesta")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini devolvió JSON inválido: {exc}")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Respuesta inesperada de Gemini (no es objeto)")
+
+    data["used_vision"] = used_vision
+    return data

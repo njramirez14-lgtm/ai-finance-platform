@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Edit, Trash, Loader2, AlertCircle, Home, Building2, CreditCard, Briefcase, GraduationCap, Wallet, BanknoteArrowDown,
+  Sparkles, FileSearch, Check,
 } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
@@ -89,6 +90,108 @@ export default function LiabilitiesPage() {
   const [payAmount, setPayAmount] = useState("");
   const [payAccount, setPayAccount] = useState("");
   const [payBusy, setPayBusy] = useState(false);
+
+  // Analyze statement dialog
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [analyzeTarget, setAnalyzeTarget] = useState(null);
+  const [analyzeBusy, setAnalyzeBusy] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState(null);
+  const [analyzeError, setAnalyzeError] = useState(null);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [picks, setPicks] = useState(() => new Set());
+
+  const openAnalyze = (it) => {
+    setAnalyzeTarget(it);
+    setAnalyzeResult(null);
+    setAnalyzeError(null);
+    setPicks(new Set());
+    setAnalyzeOpen(true);
+  };
+
+  const handleAnalyzeFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !analyzeTarget) return;
+    const sizeMb = file.size / (1024 * 1024);
+    if (sizeMb > 4.4) {
+      setAnalyzeError(`Archivo demasiado grande (${sizeMb.toFixed(1)} MB). Máx 4,5 MB.`);
+      return;
+    }
+    setAnalyzeBusy(true);
+    setAnalyzeError(null);
+    setAnalyzeResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post(
+        `/liabilities/${analyzeTarget.id}/analyze-statement`,
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      setAnalyzeResult(data);
+      // Pre-select every field Gemini found something for.
+      const next = new Set();
+      const map = {
+        monthly_payment: "monthly_payment",
+        interest_rate_annual: "interest_rate",
+        current_balance: "current_balance",
+        original_amount: "original_amount",
+        start_date: "start_date",
+        end_date: "end_date",
+        lender: "lender",
+        loan_type: "type",
+      };
+      Object.keys(map).forEach((k) => {
+        if (data[k] !== null && data[k] !== undefined && data[k] !== "") next.add(k);
+      });
+      setPicks(next);
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      setAnalyzeError(detail || (status ? `Error ${status}` : "Error analizando documento"));
+    } finally {
+      setAnalyzeBusy(false);
+      e.target.value = "";
+    }
+  };
+
+  const togglePick = (k) => setPicks((p) => {
+    const n = new Set(p);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+
+  const applyAnalysis = async () => {
+    if (!analyzeTarget || !analyzeResult) return;
+    const fieldMap = {
+      monthly_payment: () => analyzeResult.monthly_payment,
+      interest_rate_annual: () => analyzeResult.interest_rate_annual,
+      current_balance: () => analyzeResult.current_balance,
+      original_amount: () => analyzeResult.original_amount,
+      start_date: () => analyzeResult.start_date,
+      end_date: () => analyzeResult.end_date,
+      lender: () => analyzeResult.lender,
+      loan_type: () => analyzeResult.loan_type,
+    };
+    const payload = {};
+    picks.forEach((k) => {
+      const val = fieldMap[k]?.();
+      if (val === null || val === undefined || val === "") return;
+      if (k === "interest_rate_annual") payload.interest_rate = val;
+      else if (k === "loan_type") payload.type = val;
+      else payload[k] = val;
+    });
+    if (Object.keys(payload).length === 0) return;
+    setApplyBusy(true);
+    try {
+      await api.put(`/liabilities/${analyzeTarget.id}`, payload);
+      setAnalyzeOpen(false);
+      await load();
+    } catch (err) {
+      setAnalyzeError(err.response?.data?.detail || "Error aplicando los cambios");
+    } finally {
+      setApplyBusy(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -457,6 +560,9 @@ export default function LiabilitiesPage() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" onClick={() => openAnalyze(it)} title="Analizar archivo del préstamo">
+                          <FileSearch size={14} />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => openEdit(it)} title="Editar">
                           <Edit size={14} />
                         </Button>
@@ -564,6 +670,154 @@ export default function LiabilitiesPage() {
             <Button onClick={submitPayment} disabled={payBusy}>
               {payBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Registrando…</> : "Registrar pago"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={analyzeOpen} onOpenChange={setAnalyzeOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles size={18} /> Analizar documento del préstamo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {analyzeTarget && (
+              <div className="text-sm text-muted-foreground">
+                Deuda: <strong>{analyzeTarget.name}</strong>. Sube el cuadro de amortización, escritura, certificado de deuda o el extracto del banco que tenga las cuotas.
+              </div>
+            )}
+
+            {!analyzeResult && (
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv,.pdf,.xlsx,.xlsm,text/*,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="block w-full text-sm file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 cursor-pointer"
+                onChange={handleAnalyzeFile}
+                disabled={analyzeBusy}
+              />
+            )}
+
+            {analyzeBusy && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
+                <Loader2 className="animate-spin" size={16} /> Analizando con Gemini…
+              </div>
+            )}
+
+            {analyzeError && (
+              <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                <span>{analyzeError}</span>
+              </div>
+            )}
+
+            {analyzeResult && (
+              <div className="space-y-3">
+                {analyzeResult.summary && (
+                  <div className="p-3 rounded-md text-sm bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                    {analyzeResult.summary}
+                    {analyzeResult.confidence && (
+                      <div className="text-[10px] uppercase tracking-wider text-indigo-300/70 mt-1">
+                        Confianza: {analyzeResult.confidence}
+                        {analyzeResult.used_vision && " · leído por Gemini Vision"}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="text-xs text-muted-foreground">
+                  Marca los valores que quieres aplicar a la deuda <strong>{analyzeTarget?.name}</strong>:
+                </div>
+
+                <div className="space-y-1">
+                  {[
+                    ["monthly_payment", "Cuota mensual", (v) => fmt(v, analyzeTarget?.currency)],
+                    ["interest_rate_annual", `Interés anual${analyzeResult.interest_rate_kind ? ` (${analyzeResult.interest_rate_kind})` : ""}`, (v) => `${Number(v).toFixed(2)}%`],
+                    ["current_balance", "Capital pendiente", (v) => fmt(v, analyzeTarget?.currency)],
+                    ["original_amount", "Importe original", (v) => fmt(v, analyzeTarget?.currency)],
+                    ["start_date", "Fecha inicio", (v) => v],
+                    ["end_date", "Fecha fin", (v) => v],
+                    ["lender", "Entidad", (v) => v],
+                    ["loan_type", "Tipo de deuda", (v) => v],
+                  ].map(([key, label, format]) => {
+                    const val = analyzeResult[key];
+                    const has = val !== null && val !== undefined && val !== "";
+                    return (
+                      <button
+                        type="button"
+                        key={key}
+                        disabled={!has}
+                        onClick={() => has && togglePick(key)}
+                        className={`w-full flex items-center gap-3 p-2 rounded-md border text-sm text-left transition-colors ${
+                          !has
+                            ? "border-border/40 text-muted-foreground/40 cursor-not-allowed"
+                            : picks.has(key)
+                              ? "border-emerald-500/40 bg-emerald-500/5"
+                              : "border-border hover:bg-muted/40"
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${picks.has(key) ? "bg-emerald-500 border-emerald-500 text-white" : "border-border"}`}>
+                          {picks.has(key) && <Check size={10} />}
+                        </span>
+                        <span className="flex-1">{label}</span>
+                        <span className="font-mono text-xs">
+                          {has ? format(val) : "—"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {(analyzeResult.term_months || analyzeResult.remaining_months || analyzeResult.payments_paid) && (
+                  <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-border">
+                    {analyzeResult.term_months != null && (
+                      <div>
+                        <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Plazo</div>
+                        <div className="font-mono font-semibold">{analyzeResult.term_months} meses</div>
+                      </div>
+                    )}
+                    {analyzeResult.payments_paid != null && (
+                      <div>
+                        <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Pagadas</div>
+                        <div className="font-mono font-semibold">{analyzeResult.payments_paid}</div>
+                      </div>
+                    )}
+                    {analyzeResult.remaining_months != null && (
+                      <div>
+                        <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Quedan</div>
+                        <div className="font-mono font-semibold">{analyzeResult.remaining_months}</div>
+                      </div>
+                    )}
+                    {analyzeResult.total_interest_paid != null && (
+                      <div>
+                        <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Interés pagado</div>
+                        <div className="font-mono font-semibold">{fmt(analyzeResult.total_interest_paid, analyzeTarget?.currency)}</div>
+                      </div>
+                    )}
+                    {analyzeResult.total_interest_remaining != null && (
+                      <div>
+                        <div className="text-muted-foreground uppercase tracking-wider text-[10px]">Interés pendiente</div>
+                        <div className="font-mono font-semibold">{fmt(analyzeResult.total_interest_remaining, analyzeTarget?.currency)}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setAnalyzeOpen(false)}>Cerrar</Button>
+            {analyzeResult && (
+              <Button
+                onClick={applyAnalysis}
+                disabled={applyBusy || picks.size === 0}
+                className="gap-2"
+              >
+                {applyBusy
+                  ? <><Loader2 className="animate-spin" size={14} /> Aplicando…</>
+                  : <>Aplicar {picks.size} {picks.size === 1 ? "cambio" : "cambios"}</>}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
