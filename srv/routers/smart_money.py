@@ -502,6 +502,125 @@ async def sync_senate_fmp(db: Session = Depends(get_db)):
     }
 
 
+LAMBDA_FIN_URL = os.environ.get(
+    "LAMBDA_FIN_URL",
+    "https://www.lambdafin.com/api/congressional/recent",
+)
+
+
+def _ingest_lambda_records(db: Session, records: list[dict[str, Any]]) -> tuple[int, int]:
+    """Lambda Finance payload (dual-chamber: House + Senate, no API key).
+    Schema per row: symbol, representative, transactionDate, disclosureDate,
+    type, amount, owner, assetDescription, party, state, district, chamber,
+    ptrLink, capGainsOver200, comment."""
+    inserted = 0
+    skipped = 0
+    fetched_at = datetime.utcnow()
+
+    seen_in_batch: set[tuple] = set()
+    for rec in records:
+        actor_name = (rec.get("representative") or rec.get("senator") or "").strip().rstrip(",").strip()
+        if not actor_name:
+            skipped += 1
+            continue
+        ticker = (rec.get("symbol") or rec.get("ticker") or "").strip().upper() or None
+        if ticker in {"--", "N/A", ""}:
+            ticker = None
+        tx_type = _normalize_tx_type(rec.get("type") or rec.get("transactionType"))
+        tx_date = _parse_date(rec.get("transactionDate"))
+        disclosure = _parse_date(rec.get("disclosureDate"))
+        amount_min, amount_max = _parse_amount(rec.get("amount"))
+        chamber = (rec.get("chamber") or "house").strip().lower() or "house"
+        notes_raw = (rec.get("comment") or rec.get("owner") or "").strip()
+        notes = notes_raw if notes_raw and notes_raw != "--" else None
+
+        dedup_key = (chamber, None, actor_name, ticker, tx_date, tx_type, amount_min)
+        if dedup_key in seen_in_batch:
+            skipped += 1
+            continue
+        seen_in_batch.add(dedup_key)
+
+        existing = (
+            db.query(SmartMoneyTrade.id)
+            .filter(
+                SmartMoneyTrade.source == chamber,
+                SmartMoneyTrade.actor_name == actor_name,
+                SmartMoneyTrade.ticker == ticker,
+                SmartMoneyTrade.transaction_date == tx_date,
+                SmartMoneyTrade.transaction_type == tx_type,
+                SmartMoneyTrade.amount_min == amount_min,
+            )
+            .first()
+        )
+        if existing:
+            skipped += 1
+            continue
+
+        db.add(
+            SmartMoneyTrade(
+                source=chamber,
+                source_id=None,
+                actor_type="politician",
+                actor_name=actor_name,
+                actor_party=rec.get("party"),
+                actor_chamber=chamber,
+                actor_state=rec.get("state") or rec.get("district"),
+                ticker=ticker,
+                asset_name=(rec.get("assetDescription") or "").strip() or None,
+                asset_type=None,
+                transaction_type=tx_type,
+                transaction_date=tx_date,
+                disclosure_date=disclosure,
+                amount_min=amount_min,
+                amount_max=amount_max,
+                raw_url=rec.get("ptrLink") or rec.get("link"),
+                notes=notes,
+                fetched_at=fetched_at,
+            )
+        )
+        inserted += 1
+        if inserted % 500 == 0:
+            db.flush()
+
+    db.commit()
+    return inserted, skipped
+
+
+@router.post("/sync/lambda")
+async def sync_lambda(
+    db: Session = Depends(get_db),
+    days: int = Query(default=180, ge=1, le=730),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    """Descarga trades del Congreso (House + Senate) desde lambdafin.com —
+    fuente activa, sin API key, datos actualizados a diario. Reemplaza el
+    repo senate-stock-watcher que dejó de actualizarse en 2019.
+    Idempotente."""
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=UA_HEADERS) as client:
+            r = await client.get(LAMBDA_FIN_URL, params={"days": days, "limit": limit})
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Lambda Finance HTTP {r.status_code}: {r.text[:200]}")
+        payload = r.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Network error: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=f"Invalid JSON from source: {exc}") from exc
+
+    records = payload.get("trades") if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        raise HTTPException(status_code=502, detail="Unexpected format from Lambda Finance")
+
+    inserted, skipped = _ingest_lambda_records(db, records)
+    return {
+        "source": "lambda-finance",
+        "fetched_records": len(records),
+        "inserted": inserted,
+        "skipped": skipped,
+        "days": days,
+    }
+
+
 @router.post("/sync/13f")
 def sync_13f():
     """SEC 13F (Buffett, Bridgewater, Citadel...) — pendiente integracion EDGAR.
@@ -526,6 +645,15 @@ async def run_daily_cron(
 
     results: dict[str, Any] = {}
 
+    # Primary source: Lambda Finance (active, free, dual-chamber).
+    try:
+        results["lambda"] = await sync_lambda(db=db, days=180, limit=500)
+    except HTTPException as exc:
+        results["lambda"] = {"error": exc.detail, "status": exc.status_code}
+    except Exception as exc:
+        results["lambda"] = {"error": str(exc)}
+
+    # Legacy: senate-stock-watcher (frozen since 2019, kept for historical fill).
     try:
         results["senate_watcher"] = await sync_congress(db=db, limit=None)
     except HTTPException as exc:

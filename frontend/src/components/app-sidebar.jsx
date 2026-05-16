@@ -17,6 +17,7 @@ import {
   Crown,
   TrendingUp,
   PiggyBank,
+  Newspaper,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -101,6 +102,11 @@ export function AppSidebar({ ...props }) {
         title: "Mercados",
         url: "/markets",
         icon: LineChart,
+      },
+      {
+        title: "Noticias",
+        url: "/news",
+        icon: Newspaper,
       },
       {
         title: "Smart Money",

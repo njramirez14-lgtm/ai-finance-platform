@@ -117,10 +117,10 @@ export default function SmartMoneyPage() {
     setSyncing(true);
     setError(null);
     try {
-      const { data } = await api.post("/smart-money/sync/congress");
+      const { data } = await api.post("/smart-money/sync/lambda", null, { params: { days: 180, limit: 500 } });
       await Promise.all([loadTrades(), loadStats()]);
       setError(null);
-      alert(`Sync OK · descargados ${data.fetched_records}, insertados ${data.inserted}, omitidos ${data.skipped}`);
+      alert(`Sync OK (Lambda Finance · House + Senate) · descargados ${data.fetched_records}, insertados ${data.inserted}, omitidos ${data.skipped}`);
     } catch (err) {
       setError(err.response?.data?.detail || "Error sincronizando con la fuente");
     } finally {
@@ -142,7 +142,7 @@ export default function SmartMoneyPage() {
               <Crown size={22} /> Smart Money
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Sigue lo que compran y venden los congresistas y senadores de EEUU (Pelosi & cía) e instituciones tipo Berkshire.
+              Sigue lo que compran y venden los congresistas y senadores de EEUU (Pelosi & cía) — datos vía Lambda Finance (House + Senate, actualizado a diario).
             </p>
           </div>
           <Button onClick={handleSync} disabled={syncing} className="gap-2">

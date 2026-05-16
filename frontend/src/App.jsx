@@ -19,6 +19,7 @@ import CardsPage from "./pages/cards";
 import SubscriptionsPage from "./pages/subscriptions";
 import IncomePage from "./pages/income";
 import BudgetsPage from "./pages/budgets";
+import NewsPage from "./pages/news";
 import BacktestPage from "./pages/backtest";
 import StrategyPage from "./pages/strategy";
 import PortfolioPage from "./pages/portfolio";
@@ -153,6 +154,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <BudgetsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/news"
+            element={
+              <ProtectedRoute>
+                <NewsPage />
               </ProtectedRoute>
             }
           />
