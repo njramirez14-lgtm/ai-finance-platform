@@ -154,8 +154,8 @@ export default function SubscriptionsPage() {
     setError(null);
     try {
       const [s, sum, c, a, cat] = await Promise.all([
-        api.get("/subscriptions/"),
-        api.get("/subscriptions/summary").catch(() => ({ data: null })),
+        api.get("/subscriptions/?kind=EXPENSE"),
+        api.get("/subscriptions/summary?kind=EXPENSE").catch(() => ({ data: null })),
         api.get("/cards/").catch(() => ({ data: [] })),
         api.get("/accounts/").catch(() => ({ data: [] })),
         api.get("/categories/").catch(() => ({ data: [] })),
@@ -208,6 +208,7 @@ export default function SubscriptionsPage() {
         next_charge_date: form.next_charge_date || null,
         started_at: form.started_at || null,
         status: form.status,
+        kind: "EXPENSE",
         notes: form.notes.trim() || null,
         card_id: form.card_id ? parseInt(form.card_id, 10) : null,
         account_id: form.account_id ? parseInt(form.account_id, 10) : null,

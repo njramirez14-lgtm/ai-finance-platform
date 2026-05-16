@@ -1,6 +1,7 @@
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from srv.api.deps import get_db
@@ -45,6 +46,7 @@ def create_subscription(
         next_charge_date=payload.next_charge_date,
         started_at=payload.started_at,
         status=payload.status or "ACTIVE",
+        kind=payload.kind or "EXPENSE",
         notes=payload.notes,
     )
     db.add(sub)
@@ -57,11 +59,13 @@ def create_subscription(
 def list_subscriptions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    kind: Literal["EXPENSE", "INCOME"] | None = Query(default=None),
 ):
+    q = db.query(Subscription).filter(Subscription.user_id == current_user.id)
+    if kind is not None:
+        q = q.filter(Subscription.kind == kind)
     return (
-        db.query(Subscription)
-        .filter(Subscription.user_id == current_user.id)
-        .order_by(Subscription.next_charge_date.asc().nulls_last(), Subscription.name.asc())
+        q.order_by(Subscription.next_charge_date.asc().nulls_last(), Subscription.name.asc())
         .all()
     )
 
@@ -70,12 +74,12 @@ def list_subscriptions(
 def subscriptions_summary(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    kind: Literal["EXPENSE", "INCOME"] | None = Query(default=None),
 ):
-    rows = (
-        db.query(Subscription)
-        .filter(Subscription.user_id == current_user.id)
-        .all()
-    )
+    q = db.query(Subscription).filter(Subscription.user_id == current_user.id)
+    if kind is not None:
+        q = q.filter(Subscription.kind == kind)
+    rows = q.all()
     monthly = Decimal("0")
     active = paused = cancelled = 0
     for r in rows:
@@ -115,7 +119,7 @@ def update_subscription(
     for field in (
         "entity_id", "card_id", "account_id", "category_id",
         "name", "description", "amount", "currency", "billing_cycle",
-        "next_charge_date", "started_at", "status", "notes",
+        "next_charge_date", "started_at", "status", "kind", "notes",
     ):
         v = getattr(payload, field)
         if v is not None:

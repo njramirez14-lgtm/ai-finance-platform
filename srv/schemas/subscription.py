@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 BillingCycleLiteral = Literal["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY", "CUSTOM"]
 SubStatusLiteral = Literal["ACTIVE", "PAUSED", "CANCELLED"]
+SubKindLiteral = Literal["EXPENSE", "INCOME"]
 
 
 class SubscriptionBase(BaseModel):
@@ -18,6 +19,7 @@ class SubscriptionBase(BaseModel):
     next_charge_date: date_type | None = None
     started_at: date_type | None = None
     status: SubStatusLiteral = "ACTIVE"
+    kind: SubKindLiteral = "EXPENSE"
     notes: str | None = None
     entity_id: int | None = None
     card_id: int | None = None
@@ -38,6 +40,7 @@ class SubscriptionUpdate(BaseModel):
     next_charge_date: date_type | None = None
     started_at: date_type | None = None
     status: SubStatusLiteral | None = None
+    kind: SubKindLiteral | None = None
     notes: str | None = None
     entity_id: int | None = None
     card_id: int | None = None

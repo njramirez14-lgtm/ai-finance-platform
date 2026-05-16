@@ -173,19 +173,12 @@ def _account_balance(db: Session, account: Account) -> Decimal:
         .scalar()
         or 0
     )
-    # TRANSFER counts as money leaving the source account (e.g. CaixaBank PAYPAL
-    # charge that funds a PayPal purchase), so it decrements the balance like an
-    # EXPENSE — but it's excluded from the global Gastos total elsewhere.
-    transfer_out = (
-        db.query(func.coalesce(func.sum(Transaction.amount), 0))
-        .filter(
-            Transaction.account_id == account.id,
-            Transaction.type == TransactionType.TRANSFER,
-        )
-        .scalar()
-        or 0
-    )
-    return initial + Decimal(str(income)) - Decimal(str(expense)) - Decimal(str(transfer_out))
+    # TRANSFER rows are intentionally NOT subtracted: the user already tracks
+    # the same money in the destination account (e.g. PayPal merchant
+    # EXPENSEs) and double-counting would push the global patrimonio down
+    # by the transfer amount on every payment. Use "Ajustar saldo" on the
+    # source account to reconcile with the bank's real balance.
+    return initial + Decimal(str(income)) - Decimal(str(expense))
 
 
 def _account_monthly_flow(db: Session, account_id: int) -> tuple[Decimal, Decimal]:

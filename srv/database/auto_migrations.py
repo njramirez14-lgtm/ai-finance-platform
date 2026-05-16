@@ -69,11 +69,31 @@ def apply_transfer_support(engine: Engine) -> None:
                 ))
 
 
+def apply_subscription_kind(engine: Engine) -> None:
+    """Add subscriptions.kind so the same table can store EXPENSE and INCOME
+    recurring movements (salary, freelance fees, alquileres que cobras…)."""
+    is_pg = _is_postgres(engine)
+    if _column_exists(engine, "subscriptions", "kind"):
+        return
+    with engine.begin() as conn:
+        if is_pg:
+            conn.execute(text(
+                "ALTER TABLE subscriptions "
+                "ADD COLUMN IF NOT EXISTS kind VARCHAR NOT NULL DEFAULT 'EXPENSE'"
+            ))
+        else:
+            conn.execute(text(
+                "ALTER TABLE subscriptions "
+                "ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'EXPENSE'"
+            ))
+
+
 def run_all(engine: Engine) -> None:
     """Run every migration in order, swallowing exceptions so a single failing
     statement doesn't take the whole app down (we'd rather serve stale schema
     and fix forward)."""
-    try:
-        apply_transfer_support(engine)
-    except Exception:
-        log.exception("Auto-migration failed; continuing with current schema")
+    for fn in (apply_transfer_support, apply_subscription_kind):
+        try:
+            fn(engine)
+        except Exception:
+            log.exception("Auto-migration %s failed; continuing", fn.__name__)

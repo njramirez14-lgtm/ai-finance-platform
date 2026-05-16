@@ -3,7 +3,8 @@
   "outputDirectory": "frontend/dist",
   "installCommand": "echo skip",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" }
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api/|assets/|favicon).*)", "destination": "/index.html" }
   ],
   "functions": {
     "api/index.py": {

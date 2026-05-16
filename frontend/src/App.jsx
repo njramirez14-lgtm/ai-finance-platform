@@ -17,6 +17,7 @@ import SmartMoneyPage from "./pages/smart-money";
 import LiabilitiesPage from "./pages/liabilities";
 import CardsPage from "./pages/cards";
 import SubscriptionsPage from "./pages/subscriptions";
+import IncomePage from "./pages/income";
 import BacktestPage from "./pages/backtest";
 import StrategyPage from "./pages/strategy";
 import PortfolioPage from "./pages/portfolio";
@@ -135,6 +136,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <SubscriptionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/income"
+            element={
+              <ProtectedRoute>
+                <IncomePage />
               </ProtectedRoute>
             }
           />

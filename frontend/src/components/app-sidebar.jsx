@@ -67,6 +67,11 @@ export function AppSidebar({ ...props }) {
         icon: Repeat,
       },
       {
+        title: "Ingresos",
+        url: "/income",
+        icon: TrendingUp,
+      },
+      {
         title: "Deudas",
         url: "/liabilities",
         icon: Home,

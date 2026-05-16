@@ -22,5 +22,9 @@ class Subscription(Base):
     next_charge_date = Column(Date, nullable=True)
     started_at = Column(Date, nullable=True)
     status = Column(String, nullable=False, default="ACTIVE")  # ACTIVE, PAUSED, CANCELLED
+    # EXPENSE for recurring outflows (Netflix, gym, ...) or INCOME for recurring
+    # inflows (nómina, alquiler que cobras, freelance fijo, ...). Drives which
+    # page the row shows on and how it contributes to monthly aggregates.
+    kind = Column(String, nullable=False, default="EXPENSE")
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
