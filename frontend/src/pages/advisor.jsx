@@ -37,13 +37,15 @@ const PERSONAS = [
   {
     id: "invest",
     title: "Asesor de Inversión",
-    description: "Estrategia equilibrada y largo plazo",
+    description: "Claude Opus 4.7 · cartera real, noticias y Smart Money en vivo",
     icon: LineChart,
     accent: "text-indigo-400 border-indigo-500/30 bg-indigo-500/5",
+    poweredBy: "claude-opus-4-7",
     suggestions: [
-      "¿Qué porcentaje debería invertir en indexados?",
-      "Tengo 10.000€ ahorrados, ¿qué hago?",
-      "¿Necesito fondo de emergencia primero?",
+      "¿Cómo va mi cartera ahora mismo?",
+      "¿Hay noticias importantes sobre mis posiciones?",
+      "¿Qué está comprando el Congreso de EEUU esta semana?",
+      "Tengo 10.000€ libres, ¿dónde los meto?",
     ],
   },
   {
