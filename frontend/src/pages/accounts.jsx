@@ -224,6 +224,15 @@ export default function AccountsPage() {
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !uploadAccount) return;
+    const sizeMb = file.size / (1024 * 1024);
+    if (sizeMb > 4.4) {
+      setUploadResult({
+        success: false,
+        error: `Archivo demasiado grande (${sizeMb.toFixed(1)} MB). Vercel limita los uploads a 4,5 MB. Para PDFs grandes: divídelo, exporta solo las páginas necesarias, o súbelo como CSV/XLSX (suelen pesar mucho menos).`,
+      });
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+      return;
+    }
     setUploadBusy(true);
     setUploadResult(null);
     const fd = new FormData();
@@ -237,7 +246,17 @@ export default function AccountsPage() {
       setUploadResult(data);
       await load();
     } catch (err) {
-      setUploadResult({ success: false, error: err.response?.data?.detail || "Error subiendo extracto" });
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      let msg = detail;
+      if (!msg) {
+        if (status === 413) msg = "Archivo demasiado grande. Vercel limita los uploads a 4,5 MB.";
+        else if (status === 504) msg = "Timeout: el extracto es muy largo o Gemini va lento. Inténtalo de nuevo o divide el archivo.";
+        else if (status === 429) msg = "Cuota de Gemini agotada. Espera unos minutos.";
+        else if (status) msg = `Error ${status} subiendo extracto`;
+        else msg = `Error de red subiendo extracto: ${err.message || "sin detalle"}`;
+      }
+      setUploadResult({ success: false, error: msg });
     } finally {
       setUploadBusy(false);
       if (uploadInputRef.current) uploadInputRef.current.value = "";
@@ -631,7 +650,7 @@ export default function AccountsPage() {
             )}
             <div className="text-xs text-muted-foreground flex items-start gap-2">
               <FileText size={12} className="mt-0.5 flex-shrink-0" />
-              <span>Formatos: <strong>CSV, TXT, PDF, XLSX</strong>. Máx 8 MB. Se procesa en chunks de ~100 líneas para máxima fiabilidad.</span>
+              <span>Formatos: <strong>CSV, TXT, PDF, XLSX</strong>. Máx <strong>4,5 MB</strong> (límite de Vercel). Se procesa en chunks de ~100 líneas para máxima fiabilidad.</span>
             </div>
           </div>
           <DialogFooter>
