@@ -628,6 +628,11 @@ export default function AccountsPage() {
                   <Check size={16} className="flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <div>Importadas <strong>{uploadResult.imported}</strong> transacciones y categorizadas con IA.</div>
+                    {uploadResult.used_vision && (
+                      <div className="text-xs text-indigo-300 mt-0.5">
+                        👁 PDF leído por Gemini Vision (sin capa de texto extraíble).
+                      </div>
+                    )}
                     {uploadResult.transfers_flagged > 0 && (
                       <div className="text-xs text-amber-300/90 mt-0.5">
                         ↔ {uploadResult.transfers_flagged} marcadas como <strong>transferencias</strong> (no cuentan en Gastos). Pulsa "Reconciliar transferencias" arriba para vincularlas con el gasto real.

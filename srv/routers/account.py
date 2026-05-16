@@ -405,12 +405,9 @@ async def upload_statement(
         raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 8 MB)")
 
     text_content = _read_file_as_text(content, file.filename or "", file.content_type or "")
-    if not text_content.strip():
-        raise HTTPException(status_code=400, detail="No se ha podido extraer texto del archivo")
-
-    chunks = _chunk_text(text_content, max_lines=CHUNK_LINES)
-    if not chunks:
-        raise HTTPException(status_code=400, detail="No hay líneas reconocibles")
+    name_l = (file.filename or "").lower()
+    mime_l = (file.content_type or "").lower()
+    is_pdf = name_l.endswith(".pdf") or "pdf" in mime_l
 
     import google.generativeai as genai
 
@@ -424,20 +421,54 @@ async def upload_statement(
         },
     )
 
-    # Process chunks in parallel. With Gemini Tier 1 (1000 RPM) we can burst
-    # 20 concurrent calls easily. maxDuration is 300s in vercel.json so even
-    # very large statements (~25 chunks) fit comfortably.
-    MAX_CONCURRENCY = 20
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-    tasks = [
-        _extract_one_async(model, PROMPT_TEMPLATE.format(text=ct), sem)
-        for ct in chunks
-    ]
-    try:
-        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
-    except asyncio.TimeoutError:
-        # Something hung; collect whatever finished
-        results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
+    # If text extraction failed (scanned / compressed PDF that stripped the
+    # text layer), send the raw PDF to Gemini Vision instead.
+    used_vision = False
+    if is_pdf and len(text_content.strip()) < 100:
+        try:
+            vision_response = await asyncio.to_thread(
+                model.generate_content,
+                [
+                    {"mime_type": "application/pdf", "data": content},
+                    PROMPT_TEMPLATE.format(text="(see attached PDF)"),
+                ],
+            )
+            raw = (vision_response.text or "").strip().replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(raw) if raw else []
+            if not isinstance(parsed, list):
+                parsed = []
+            used_vision = True
+            chunks = ["(pdf-vision)"]
+            results = [(parsed, None)]
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=502, detail=f"Gemini Vision devolvió JSON inválido: {exc}")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Gemini Vision falló al leer el PDF: {exc}")
+    else:
+        if not text_content.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No se ha podido extraer texto del archivo. Si es un PDF escaneado o muy comprimido, vuelve a exportarlo del banco sin re-comprimir.",
+            )
+        chunks = _chunk_text(text_content, max_lines=CHUNK_LINES)
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No hay líneas reconocibles")
+
+    if not used_vision:
+        # Process chunks in parallel. With Gemini Tier 1 (1000 RPM) we can burst
+        # 20 concurrent calls easily. maxDuration is 300s in vercel.json so even
+        # very large statements (~25 chunks) fit comfortably.
+        MAX_CONCURRENCY = 20
+        sem = asyncio.Semaphore(MAX_CONCURRENCY)
+        tasks = [
+            _extract_one_async(model, PROMPT_TEMPLATE.format(text=ct), sem)
+            for ct in chunks
+        ]
+        try:
+            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
+        except asyncio.TimeoutError:
+            # Something hung; collect whatever finished
+            results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
 
     parsed: list[dict] = []
     failed_chunks = 0
@@ -597,6 +628,7 @@ async def upload_statement(
         "success": True,
         "imported": created,
         "transfers_flagged": transfers_flagged,
+        "used_vision": used_vision,
         "chunks_processed": len(chunks) - failed_chunks - rate_limited_count,
         "chunks_total": len(chunks),
         "failed_chunks": failed_chunks,
