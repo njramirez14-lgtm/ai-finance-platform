@@ -402,7 +402,7 @@ async def upload_statement(
 
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        "gemini-flash-latest",
+        "gemini-2.5-flash",
         generation_config={
             "temperature": 0.1,
             "max_output_tokens": 32768,
@@ -410,17 +410,17 @@ async def upload_statement(
         },
     )
 
-    # Process chunks in parallel with a small concurrency cap. Vercel kills the
-    # function at 60s, so we need throughput; the free Gemini tier allows ~15 RPM
-    # so 5 parallel calls + ~3s/chunk fits comfortably under both limits.
-    MAX_CONCURRENCY = 5
+    # Process chunks in parallel. With Gemini Tier 1 (1000 RPM) we can burst
+    # 20 concurrent calls easily. maxDuration is 300s in vercel.json so even
+    # very large statements (~25 chunks) fit comfortably.
+    MAX_CONCURRENCY = 20
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
     tasks = [
         _extract_one_async(model, PROMPT_TEMPLATE.format(text=ct), sem)
         for ct in chunks
     ]
     try:
-        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=50.0)
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
     except asyncio.TimeoutError:
         # Something hung; collect whatever finished
         results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
