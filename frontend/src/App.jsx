@@ -25,6 +25,8 @@ import StrategyPage from "./pages/strategy";
 import PortfolioPage from "./pages/portfolio";
 import PropertiesPage from "./pages/properties";
 import VehiclesPage from "./pages/vehicles";
+import EmployeesPage from "./pages/employees";
+import RemindersPage from "./pages/reminders";
 import DemoPage from "./pages/demo";
 import ProtectedRoute from "./components/protected-routes";
 import { ThemeProvider } from "./components/theme-provider";
@@ -221,6 +223,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <VehiclesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/employees"
+            element={
+              <ProtectedRoute>
+                <EmployeesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reminders"
+            element={
+              <ProtectedRoute>
+                <RemindersPage />
               </ProtectedRoute>
             }
           />

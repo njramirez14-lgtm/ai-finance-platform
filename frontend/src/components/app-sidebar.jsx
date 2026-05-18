@@ -21,6 +21,8 @@ import {
   Car,
   Building,
   PartyPopper,
+  Users,
+  Bell,
 } from "lucide-react";
 
 import { NavSection } from "@/components/nav-section";
@@ -37,6 +39,20 @@ import useStore from "@/store";
 
 export function AppSidebar({ ...props }) {
   const { user } = useStore((state) => state.auth);
+  const scope = useStore((s) => s.scope);
+  const entities = useStore((s) => s.entitiesCache);
+
+  // Determine if the user is currently operating in a "company" workspace.
+  // If scope is a specific entity, check its type. If scope.kind === "type", use that.
+  let mode = "ALL"; // ALL | PERSONAL | BUSINESS
+  if (scope?.kind === "entity" && scope.value != null) {
+    const e = (entities || []).find((x) => x.id === Number(scope.value));
+    if (e) mode = e.type;
+  } else if (scope?.kind === "type") {
+    mode = scope.value;
+  }
+  const showCompany = mode === "BUSINESS" || mode === "ALL";
+  const showPersonal = mode === "PERSONAL" || mode === "ALL";
 
   const sections = [
     {
@@ -68,6 +84,27 @@ export function AppSidebar({ ...props }) {
         { title: "Entidades", url: "/entities", icon: Building2 },
       ],
     },
+    ...(mode === "BUSINESS" ? [{
+      label: "Empresa",
+      items: [
+        { title: "Empleados", url: "/employees", icon: Users },
+        { title: "Sueldos / nómina", url: "/employees", icon: TrendingUp },
+        { title: "Pagos automáticos", url: "/subscriptions", icon: Repeat },
+        { title: "Recordatorios", url: "/reminders", icon: Bell },
+      ],
+    }] : mode === "ALL" ? [{
+      label: "Empresa",
+      items: [
+        { title: "Empleados", url: "/employees", icon: Users },
+        { title: "Pagos automáticos", url: "/subscriptions", icon: Repeat },
+      ],
+    }] : []),
+    ...(mode !== "BUSINESS" ? [{
+      label: "Recordatorios",
+      items: [
+        { title: "Recordatorios", url: "/reminders", icon: Bell },
+      ],
+    }] : []),
     {
       label: "Inversión & Inteligencia",
       items: [
