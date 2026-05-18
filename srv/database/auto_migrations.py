@@ -132,11 +132,31 @@ def apply_budgets_table(engine: Engine) -> None:
             ))
 
 
+def apply_notification_prefs(engine: Engine) -> None:
+    """Add notification-preferences columns to the settings table."""
+    is_pg = _is_postgres(engine)
+    cols = [
+        ("notify_email", "TEXT"),
+        ("email_alerts_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("notify_reminders", "BOOLEAN DEFAULT TRUE"),
+        ("notify_payroll", "BOOLEAN DEFAULT TRUE"),
+        ("notify_documents", "BOOLEAN DEFAULT TRUE"),
+        ("notify_investment_alerts", "BOOLEAN DEFAULT TRUE"),
+    ]
+    with engine.begin() as conn:
+        for col, ddl in cols:
+            if not _column_exists(engine, "settings", col):
+                if is_pg:
+                    conn.execute(text(f"ALTER TABLE settings ADD COLUMN {col} {ddl}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE settings ADD COLUMN {col} {ddl}"))
+
+
 def run_all(engine: Engine) -> None:
     """Run every migration in order, swallowing exceptions so a single failing
     statement doesn't take the whole app down (we'd rather serve stale schema
     and fix forward)."""
-    for fn in (apply_transfer_support, apply_subscription_kind, apply_budgets_table):
+    for fn in (apply_transfer_support, apply_subscription_kind, apply_budgets_table, apply_notification_prefs):
         try:
             fn(engine)
         except Exception:

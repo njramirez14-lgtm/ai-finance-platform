@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import useStore from "@/store";
 import TelegramConnect from "@/components/telegram-connect";
+import { EmailNotifications } from "@/components/email-notifications";
 
 export default function SettingsPage() {
   const { user } = useStore((s) => s.auth);
@@ -41,6 +42,8 @@ export default function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
+
+        <EmailNotifications />
 
         <TelegramConnect />
 

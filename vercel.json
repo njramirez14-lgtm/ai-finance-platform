@@ -13,6 +13,7 @@
   },
   "crons": [
     { "path": "/api/strategy/cron/daily", "schedule": "0 8 * * *" },
-    { "path": "/api/smart-money/cron/daily", "schedule": "30 8 * * *" }
+    { "path": "/api/smart-money/cron/daily", "schedule": "30 8 * * *" },
+    { "path": "/api/notifications/cron/email-daily", "schedule": "0 7 * * *" }
   ]
 }
