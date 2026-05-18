@@ -72,6 +72,7 @@ export default function SmartMoneyPage() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
   const [stats, setStats] = useState(null);
+  const [freshness, setFreshness] = useState(null);
 
   const [filters, setFilters] = useState({
     politician: "",
@@ -113,12 +114,21 @@ export default function SmartMoneyPage() {
     }
   };
 
+  const loadFreshness = async () => {
+    try {
+      const { data } = await api.get("/smart-money/freshness");
+      setFreshness(data);
+    } catch {
+      setFreshness(null);
+    }
+  };
+
   const handleSync = async () => {
     setSyncing(true);
     setError(null);
     try {
       const { data } = await api.post("/smart-money/sync/lambda", null, { params: { days: 180, limit: 500 } });
-      await Promise.all([loadTrades(), loadStats()]);
+      await Promise.all([loadTrades(), loadStats(), loadFreshness()]);
       setError(null);
       alert(`Sync OK (Lambda Finance · House + Senate) · descargados ${data.fetched_records}, insertados ${data.inserted}, omitidos ${data.skipped}`);
     } catch (err) {
@@ -129,7 +139,7 @@ export default function SmartMoneyPage() {
   };
 
   useEffect(() => { loadTrades(); }, [params]);
-  useEffect(() => { loadStats(); }, []);
+  useEffect(() => { loadStats(); loadFreshness(); }, []);
 
   const isEmpty = !loading && trades.length === 0;
 
@@ -155,6 +165,25 @@ export default function SmartMoneyPage() {
           <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-rose-500/10 text-rose-400 border border-rose-500/20">
             <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {freshness && (
+          <div className={`flex items-start gap-2 p-3 rounded-md text-sm border ${freshness.is_stale ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30" : "bg-emerald-500/5 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"}`}>
+            <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-medium">
+                {freshness.is_stale
+                  ? `Datos antiguos: última operación registrada hace ${freshness.days_since_last_trade} días (${fmtDate(freshness.last_trade_date)})`
+                  : `Datos al día: última operación hace ${freshness.days_since_last_trade ?? "?"} días (${fmtDate(freshness.last_trade_date)})`}
+              </div>
+              <div className="text-xs opacity-80 mt-0.5">{freshness.note}</div>
+              {freshness.by_source?.length > 0 && (
+                <div className="text-xs opacity-70 mt-1">
+                  Fuentes: {freshness.by_source.map((s) => `${s.source} (${s.total}, último ${s.last_trade ? fmtDate(s.last_trade) : "—"})`).join(" · ")}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

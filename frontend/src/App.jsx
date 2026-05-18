@@ -23,6 +23,9 @@ import NewsPage from "./pages/news";
 import BacktestPage from "./pages/backtest";
 import StrategyPage from "./pages/strategy";
 import PortfolioPage from "./pages/portfolio";
+import PropertiesPage from "./pages/properties";
+import VehiclesPage from "./pages/vehicles";
+import DemoPage from "./pages/demo";
 import ProtectedRoute from "./components/protected-routes";
 import { ThemeProvider } from "./components/theme-provider";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -205,6 +208,25 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/properties"
+            element={
+              <ProtectedRoute>
+                <PropertiesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/vehicles"
+            element={
+              <ProtectedRoute>
+                <VehiclesPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Public demo — sandbox, no auth */}
+          <Route path="/demo" element={<DemoPage />} />
+          <Route path="/demo/:sessionId" element={<DemoPage />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

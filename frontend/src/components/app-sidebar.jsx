@@ -18,9 +18,12 @@ import {
   TrendingUp,
   PiggyBank,
   Newspaper,
+  Car,
+  Building,
+  PartyPopper,
 } from "lucide-react";
 
-import { NavMain } from "@/components/nav-main";
+import { NavSection } from "@/components/nav-section";
 import { NavUser } from "@/components/nav-user";
 import { EntitySwitcher } from "@/components/entity-switcher";
 import {
@@ -35,110 +38,65 @@ import useStore from "@/store";
 export function AppSidebar({ ...props }) {
   const { user } = useStore((state) => state.auth);
 
-  const data = {
-    user: {
-      name: user ? user.username : null,
-      email: user ? user.email : null,
-      avatar: "/avatars/shadcn.jpg",
+  const sections = [
+    {
+      label: "General",
+      items: [
+        { title: "Dashboard", url: "/dashboard", icon: LucideLayoutDashboard },
+        { title: "Informes", url: "/reports", icon: PieChart },
+      ],
     },
-    navMain: [
-      {
-        title: "Dashboard",
-        url: "/dashboard",
-        icon: LucideLayoutDashboard,
-        isActive: true,
-      },
-      {
-        title: "Transacciones",
-        url: "/transactions",
-        icon: Table2Icon,
-      },
-      {
-        title: "Cuentas",
-        url: "/accounts",
-        icon: Wallet,
-      },
-      {
-        title: "Tarjetas",
-        url: "/cards",
-        icon: CreditCard,
-      },
-      {
-        title: "Suscripciones",
-        url: "/subscriptions",
-        icon: Repeat,
-      },
-      {
-        title: "Ingresos",
-        url: "/income",
-        icon: TrendingUp,
-      },
-      {
-        title: "Presupuestos",
-        url: "/budgets",
-        icon: PiggyBank,
-      },
-      {
-        title: "Deudas",
-        url: "/liabilities",
-        icon: Home,
-      },
-      {
-        title: "Entidades",
-        url: "/entities",
-        icon: Building2,
-      },
-      {
-        title: "Cartera",
-        url: "/portfolio",
-        icon: TrendingUp,
-      },
-      {
-        title: "Categorías",
-        url: "/categories",
-        icon: Layers,
-      },
-      {
-        title: "Mercados",
-        url: "/markets",
-        icon: LineChart,
-      },
-      {
-        title: "Noticias",
-        url: "/news",
-        icon: Newspaper,
-      },
-      {
-        title: "Smart Money",
-        url: "/smart-money",
-        icon: Crown,
-      },
-      {
-        title: "Backtest",
-        url: "/backtest",
-        icon: FlaskConical,
-      },
-      {
-        title: "Mi estrategia",
-        url: "/strategy",
-        icon: Target,
-      },
-      {
-        title: "Asesor IA",
-        url: "/advisor",
-        icon: Sparkles,
-      },
-      {
-        title: "Informes",
-        url: "/reports",
-        icon: PieChart,
-      },
-      {
-        title: "Ajustes",
-        url: "/settings",
-        icon: Settings2,
-      },
-    ],
+    {
+      label: "Finanzas día a día",
+      items: [
+        { title: "Transacciones", url: "/transactions", icon: Table2Icon },
+        { title: "Categorías", url: "/categories", icon: Layers },
+        { title: "Cuentas", url: "/accounts", icon: Wallet },
+        { title: "Tarjetas", url: "/cards", icon: CreditCard },
+        { title: "Suscripciones", url: "/subscriptions", icon: Repeat },
+        { title: "Ingresos", url: "/income", icon: TrendingUp },
+        { title: "Presupuestos", url: "/budgets", icon: PiggyBank },
+      ],
+    },
+    {
+      label: "Patrimonio",
+      items: [
+        { title: "Cartera", url: "/portfolio", icon: TrendingUp },
+        { title: "Propiedades", url: "/properties", icon: Building },
+        { title: "Vehículos", url: "/vehicles", icon: Car },
+        { title: "Deudas", url: "/liabilities", icon: Home },
+        { title: "Entidades", url: "/entities", icon: Building2 },
+      ],
+    },
+    {
+      label: "Inversión & Inteligencia",
+      items: [
+        { title: "Mi estrategia", url: "/strategy", icon: Target },
+        { title: "Mercados", url: "/markets", icon: LineChart },
+        { title: "Noticias", url: "/news", icon: Newspaper },
+        { title: "Smart Money", url: "/smart-money", icon: Crown },
+        { title: "Backtest", url: "/backtest", icon: FlaskConical },
+        { title: "Asesor IA", url: "/advisor", icon: Sparkles },
+      ],
+    },
+    {
+      label: "Demo",
+      items: [
+        { title: "Demo pública", url: "/demo", icon: PartyPopper },
+      ],
+    },
+    {
+      label: "Sistema",
+      items: [
+        { title: "Ajustes", url: "/settings", icon: Settings2 },
+      ],
+    },
+  ];
+
+  const userData = {
+    name: user ? user.username : null,
+    email: user ? user.email : null,
+    avatar: "/avatars/shadcn.jpg",
   };
 
   return (
@@ -147,10 +105,12 @@ export function AppSidebar({ ...props }) {
         <EntitySwitcher />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        {sections.map((s) => (
+          <NavSection key={s.label} label={s.label} items={s.items} />
+        ))}
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser user={userData} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

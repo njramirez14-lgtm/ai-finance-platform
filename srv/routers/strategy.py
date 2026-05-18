@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from srv.api.deps import get_db
@@ -257,6 +258,134 @@ def update_plan(
     db.commit()
     db.refresh(plan)
     return plan
+
+
+# ── AI-assisted plan generation ────────────────────────────────────────
+
+
+class AIPlanRequest(BaseModel):
+    intent: str = Field(min_length=1, max_length=2000)
+    apply: bool = False  # if True, save the plan; if False, just propose
+
+
+class AIPlanResponse(BaseModel):
+    proposed: dict
+    rationale: str
+    applied: bool
+    plan: InvestmentPlanOut | None = None
+
+
+@router.post("/plan/ai-generate", response_model=AIPlanResponse)
+def ai_generate_plan(
+    payload: "AIPlanRequest",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Ask Claude to propose an investment plan based on a natural-language intent.
+    The user describes goals (risk, horizon, monthly capacity), Claude returns
+    {monthly_core_amount, monthly_reserve_amount, core_symbol, core_symbol_label}.
+    Set apply=true to immediately save it as the active plan."""
+    import json as _json
+    import os as _os
+
+    api_key = _os.environ.get("ANTHROPIC_API_KEY")
+    current_plan = _ensure_plan(db, current_user.id)
+
+    sys_prompt = (
+        "You are a conservative European DCA investment advisor. Given the user's "
+        "intent, propose a Core+Reserve monthly plan. Output STRICT JSON with keys: "
+        "monthly_core_amount (number, EUR), monthly_reserve_amount (number, EUR), "
+        "core_symbol (string, ticker — prefer accumulating UCITS ETFs for EU residents "
+        "like VWCE, VUAA, SXR8, or VOO if dist preferred), core_symbol_label (string), "
+        "rationale (string, max 400 chars, Spanish). No markdown, no extra text."
+    )
+    user_prompt = (
+        f"Plan actual del usuario:\n"
+        f"- Core mensual: {current_plan.monthly_core_amount}€ en {current_plan.core_symbol}\n"
+        f"- Reserva mensual: {current_plan.monthly_reserve_amount}€\n"
+        f"- Activo: {current_plan.active}\n\n"
+        f"Intencion del usuario:\n{payload.intent}\n\n"
+        "Devuelve JSON estricto con los campos pedidos."
+    )
+
+    proposed: dict
+    rationale: str
+    if not api_key:
+        # Fallback: rule-based proposal
+        amount = 500
+        for word in payload.intent.split():
+            try:
+                w = float(word.replace("€", "").replace(",", "."))
+                if 50 <= w <= 10000:
+                    amount = w
+                    break
+            except ValueError:
+                continue
+        core = round(amount * 0.7, 2)
+        reserve = round(amount - core, 2)
+        proposed = {
+            "monthly_core_amount": core,
+            "monthly_reserve_amount": reserve,
+            "core_symbol": "VWCE.DE",
+            "core_symbol_label": "MSCI All-World UCITS Acc (VWCE)",
+        }
+        rationale = (
+            f"Sin API key de Claude. Reparto por defecto 70/30 sobre {amount}€/mes "
+            "en VWCE (mundial, acumulativo, sin retencion de dividendos)."
+        )
+    else:
+        try:
+            r = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 600,
+                    "system": sys_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            text = r.json()["content"][0]["text"].strip()
+            # Strip markdown fences if model added them despite instructions
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            data = _json.loads(text)
+            proposed = {
+                "monthly_core_amount": float(data["monthly_core_amount"]),
+                "monthly_reserve_amount": float(data["monthly_reserve_amount"]),
+                "core_symbol": str(data["core_symbol"]).upper(),
+                "core_symbol_label": str(data["core_symbol_label"]),
+            }
+            rationale = str(data.get("rationale", ""))[:400]
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Claude failed: {exc}") from exc
+
+    applied_plan = None
+    if payload.apply:
+        current_plan.monthly_core_amount = Decimal(str(proposed["monthly_core_amount"]))
+        current_plan.monthly_reserve_amount = Decimal(str(proposed["monthly_reserve_amount"]))
+        current_plan.core_symbol = proposed["core_symbol"]
+        current_plan.core_symbol_label = proposed["core_symbol_label"]
+        current_plan.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(current_plan)
+        applied_plan = current_plan
+
+    return AIPlanResponse(
+        proposed=proposed,
+        rationale=rationale,
+        applied=payload.apply,
+        plan=applied_plan,
+    )
 
 
 # ── /alerts ────────────────────────────────────────────────────────────

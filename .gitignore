@@ -39,3 +39,4 @@ finance.db
 
 .vercel
 .env*.local
+.env.prod

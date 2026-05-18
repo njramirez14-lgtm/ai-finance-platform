@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Edit, Trash, Loader2, AlertCircle, Tag, Sparkles } from "lucide-react";
+import { Plus, Edit, Trash, Loader2, AlertCircle, Tag, Sparkles, Search } from "lucide-react";
 import Layout from "@/components/layout";
 import api from "@/api/axios";
 
@@ -26,6 +26,7 @@ export default function CategoriesPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", type: "EXPENSE" });
   const [seeding, setSeeding] = useState(false);
+  const [drillCat, setDrillCat] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -181,7 +182,7 @@ export default function CategoriesPage() {
               <CardDescription>{incomeCats.length} categorías</CardDescription>
             </CardHeader>
             <CardContent>
-              <CategoryList items={incomeCats} loading={loading} onEdit={openEdit} onDelete={handleDelete} emptyText="Aún no tienes categorías de ingresos" />
+              <CategoryList items={incomeCats} loading={loading} onEdit={openEdit} onDelete={handleDelete} onDrill={setDrillCat} emptyText="Aún no tienes categorías de ingresos" />
             </CardContent>
           </Card>
           <Card>
@@ -190,16 +191,89 @@ export default function CategoriesPage() {
               <CardDescription>{expenseCats.length} categorías</CardDescription>
             </CardHeader>
             <CardContent>
-              <CategoryList items={expenseCats} loading={loading} onEdit={openEdit} onDelete={handleDelete} emptyText="Aún no tienes categorías de gastos" />
+              <CategoryList items={expenseCats} loading={loading} onEdit={openEdit} onDelete={handleDelete} onDrill={setDrillCat} emptyText="Aún no tienes categorías de gastos" />
             </CardContent>
           </Card>
         </div>
+
+        {drillCat && <DrillDialog category={drillCat} onClose={() => setDrillCat(null)} />}
       </div>
     </Layout>
   );
 }
 
-function CategoryList({ items, loading, onEdit, onDelete, emptyText }) {
+function DrillDialog({ category, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+
+  useEffect(() => {
+    setLoading(true);
+    api.get(`/categories/${category.id}/drill`, { params: { days } })
+      .then((r) => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [category.id, days]);
+
+  const fmt = (n) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Desglose: {category.name}</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center gap-2 mb-3">
+          {[7, 30, 90, 180, 365].map((d) => (
+            <Button key={d} size="sm" variant={days === d ? "default" : "outline"} onClick={() => setDays(d)}>{d}d</Button>
+          ))}
+        </div>
+        {loading ? (
+          <div className="text-center py-12"><Loader2 className="animate-spin inline" /></div>
+        ) : !data ? (
+          <p className="text-center text-muted-foreground py-12">No hay datos</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <Card><CardContent className="pt-4"><div className="text-xs text-muted-foreground">Total</div><div className="text-xl font-bold">{fmt(data.total_amount)}</div></CardContent></Card>
+              <Card><CardContent className="pt-4"><div className="text-xs text-muted-foreground">Transacciones</div><div className="text-xl font-bold">{data.total_transactions}</div></CardContent></Card>
+              <Card><CardContent className="pt-4"><div className="text-xs text-muted-foreground">Comercios únicos</div><div className="text-xl font-bold">{data.by_merchant?.length || 0}</div></CardContent></Card>
+            </div>
+            <h3 className="font-semibold text-sm mt-2 mb-2">Por comercio</h3>
+            <Table>
+              <TableHeader><TableRow><TableHead>Comercio</TableHead><TableHead className="text-right">Veces</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Media</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {data.by_merchant.map((m) => (
+                  <TableRow key={m.description}>
+                    <TableCell className="font-medium">{m.description}</TableCell>
+                    <TableCell className="text-right">{m.count}</TableCell>
+                    <TableCell className="text-right">{fmt(m.total)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{fmt(m.average)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <h3 className="font-semibold text-sm mt-4 mb-2">Tickets ({data.transactions.length})</h3>
+            <Table>
+              <TableHeader><TableRow><TableHead>Fecha</TableHead><TableHead>Descripción</TableHead><TableHead className="text-right">Importe</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {data.transactions.slice(0, 50).map((tx) => (
+                  <TableRow key={tx.id}>
+                    <TableCell className="text-xs">{tx.date ? new Date(tx.date).toLocaleDateString("es-ES") : "—"}</TableCell>
+                    <TableCell className="text-sm">{tx.description || "—"}</TableCell>
+                    <TableCell className={`text-right font-mono text-sm ${tx.type === "EXPENSE" ? "text-rose-500" : "text-emerald-500"}`}>{fmt(tx.amount)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CategoryList({ items, loading, onEdit, onDelete, onDrill, emptyText }) {
   if (loading) {
     return (
       <div className="space-y-2 animate-pulse">
@@ -221,8 +295,13 @@ function CategoryList({ items, loading, onEdit, onDelete, emptyText }) {
       <TableBody>
         {items.map((cat) => (
           <TableRow key={cat.id}>
-            <TableCell className="font-medium">{cat.name}</TableCell>
+            <TableCell className="font-medium cursor-pointer hover:underline" onClick={() => onDrill?.(cat)}>{cat.name}</TableCell>
             <TableCell className="text-right">
+              {onDrill && (
+                <Button variant="ghost" size="sm" onClick={() => onDrill(cat)} title="Ver tickets">
+                  <Search size={14} />
+                </Button>
+              )}
               <Button variant="ghost" size="sm" onClick={() => onEdit(cat)} title="Editar">
                 <Edit size={14} />
               </Button>

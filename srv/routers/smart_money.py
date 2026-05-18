@@ -197,6 +197,49 @@ def list_politicians(db: Session = Depends(get_db)):
     ]
 
 
+@router.get("/freshness")
+def get_freshness(db: Session = Depends(get_db)):
+    """Diagnose data staleness: most recent trade vs last successful fetch."""
+    last_trade = (
+        db.query(func.max(SmartMoneyTrade.transaction_date)).scalar()
+    )
+    last_fetch = (
+        db.query(func.max(SmartMoneyTrade.fetched_at)).scalar()
+    )
+    by_source = (
+        db.query(
+            SmartMoneyTrade.source,
+            func.max(SmartMoneyTrade.transaction_date).label("last_trade"),
+            func.max(SmartMoneyTrade.fetched_at).label("last_fetch"),
+            func.count(SmartMoneyTrade.id).label("total"),
+        )
+        .group_by(SmartMoneyTrade.source)
+        .all()
+    )
+    today = date.today()
+    days_stale = (today - last_trade).days if last_trade else None
+    return {
+        "last_trade_date": last_trade.isoformat() if last_trade else None,
+        "last_fetch_at": last_fetch.isoformat() if last_fetch else None,
+        "days_since_last_trade": days_stale,
+        "is_stale": (days_stale or 9999) > 45,  # disclosure window is 45d by law
+        "by_source": [
+            {
+                "source": s,
+                "last_trade": lt.isoformat() if lt else None,
+                "last_fetch": lf.isoformat() if lf else None,
+                "total": int(n),
+            }
+            for s, lt, lf, n in by_source
+        ],
+        "note": (
+            "Los miembros del Congreso tienen 45 dias por ley para reportar sus "
+            "operaciones (STOCK Act). Lag de 30-60 dias es normal; mas significa "
+            "que la fuente esta caida o no se ha actualizado."
+        ),
+    }
+
+
 @router.get("/stats")
 def get_stats(
     db: Session = Depends(get_db),

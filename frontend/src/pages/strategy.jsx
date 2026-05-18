@@ -50,6 +50,37 @@ export default function StrategyPage() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [busyAlertId, setBusyAlertId] = useState(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiIntent, setAiIntent] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiProposal, setAiProposal] = useState(null);
+
+  const askAi = async () => {
+    setAiBusy(true);
+    try {
+      const { data } = await api.post("/strategy/plan/ai-generate", { intent: aiIntent, apply: false });
+      setAiProposal(data);
+    } catch (err) {
+      alert(err.response?.data?.detail || "La IA no pudo proponer plan");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const applyAi = async () => {
+    setAiBusy(true);
+    try {
+      await api.post("/strategy/plan/ai-generate", { intent: aiIntent, apply: true });
+      setAiOpen(false);
+      setAiProposal(null);
+      setAiIntent("");
+      await loadAll();
+    } catch (err) {
+      alert(err.response?.data?.detail || "No se pudo aplicar el plan");
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const loadAll = async () => {
     setError(null);
@@ -260,7 +291,12 @@ export default function StrategyPage() {
               </CardDescription>
             </div>
             {!editing && (
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Editar</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setAiOpen(true)} className="gap-1">
+                  <Sparkles size={14} /> Pedir a la IA
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Editar</Button>
+              </div>
             )}
           </CardHeader>
           <CardContent className="space-y-4">
@@ -343,6 +379,53 @@ export default function StrategyPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* AI plan generator dialog */}
+        {aiOpen && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setAiOpen(false)}>
+            <Card className="max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Sparkles size={16} /> Generar plan con IA</CardTitle>
+                <CardDescription>
+                  Describe tus objetivos (presupuesto mensual, horizonte, tolerancia al riesgo) y Claude te propondrá un plan. Tú lo revisas y aplicas si te convence.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Label>Tu intención</Label>
+                <textarea
+                  className="w-full min-h-[110px] rounded-md border bg-background px-3 py-2 text-sm"
+                  placeholder="Quiero invertir 500€/mes a 20 años, perfil moderado. Prefiero ETF acumulativo mundial. Tengo un bebé en camino, así que 30% reserva para emergencias del mercado."
+                  value={aiIntent}
+                  onChange={(e) => setAiIntent(e.target.value)}
+                />
+                {aiProposal && (
+                  <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Propuesta</div>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>Core mensual: <strong>{fmt(aiProposal.proposed.monthly_core_amount)}</strong></div>
+                      <div>Reserva mensual: <strong>{fmt(aiProposal.proposed.monthly_reserve_amount)}</strong></div>
+                      <div>ETF: <strong>{aiProposal.proposed.core_symbol}</strong></div>
+                      <div className="text-xs text-muted-foreground col-span-2">{aiProposal.proposed.core_symbol_label}</div>
+                    </div>
+                    {aiProposal.rationale && (
+                      <div className="text-xs text-muted-foreground border-t pt-2">{aiProposal.rationale}</div>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <Button variant="ghost" onClick={() => { setAiOpen(false); setAiProposal(null); }}>Cerrar</Button>
+                  <Button variant="outline" onClick={askAi} disabled={!aiIntent.trim() || aiBusy}>
+                    {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                    {aiProposal ? "Reformular" : "Proponer"}
+                  </Button>
+                  {aiProposal && (
+                    <Button onClick={applyAi} disabled={aiBusy}>Aplicar al plan</Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* How it works */}
         <Card className="border-purple-500/30 bg-purple-500/5">
