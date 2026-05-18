@@ -14,9 +14,10 @@ import {
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash, Loader2, Users, Mail, Phone, AlertCircle } from "lucide-react";
+import { Plus, Trash, Loader2, Users, Mail, Phone, AlertCircle, FolderOpen } from "lucide-react";
 import api from "@/api/axios";
 import useStore from "@/store";
+import { EmployeeDetailDialog } from "@/components/employee-detail-dialog";
 
 const CONTRACTS = [
   { value: "FULL_TIME", label: "Jornada completa" },
@@ -46,6 +47,7 @@ export default function EmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(empty(currentEntityId));
+  const [detailEmp, setDetailEmp] = useState(null);
 
   const companyEntities = (entities || []).filter((e) => e.type === "BUSINESS");
 
@@ -183,7 +185,7 @@ export default function EmployeesPage() {
                 <TableBody>
                   {items.map((e) => (
                     <TableRow key={e.id}>
-                      <TableCell className="font-medium">{e.name}</TableCell>
+                      <TableCell className="font-medium cursor-pointer hover:underline" onClick={() => setDetailEmp(e)}>{e.name}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{e.role || "—"}</TableCell>
                       <TableCell className="text-xs">
                         {e.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{e.email}</div>}
@@ -193,7 +195,10 @@ export default function EmployeesPage() {
                       <TableCell className="text-right">{fmt(e.monthly_salary)}</TableCell>
                       <TableCell>{e.payment_day ? `día ${e.payment_day}` : "—"}</TableCell>
                       <TableCell><Badge variant={e.status === "ACTIVE" ? "default" : "outline"}>{e.status}</Badge></TableCell>
-                      <TableCell><Button size="icon" variant="ghost" onClick={() => remove(e.id)}><Trash className="h-4 w-4" /></Button></TableCell>
+                      <TableCell>
+                        <Button size="icon" variant="ghost" onClick={() => setDetailEmp(e)} title="Documentos y bajas"><FolderOpen className="h-4 w-4" /></Button>
+                        <Button size="icon" variant="ghost" onClick={() => remove(e.id)}><Trash className="h-4 w-4" /></Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -201,6 +206,13 @@ export default function EmployeesPage() {
             )}
           </CardContent>
         </Card>
+
+        <EmployeeDetailDialog
+          employee={detailEmp}
+          open={!!detailEmp}
+          onClose={() => setDetailEmp(null)}
+          onChanged={load}
+        />
 
         {payroll?.next_paydays?.length > 0 && (
           <Card>

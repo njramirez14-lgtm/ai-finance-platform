@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from srv.core.config import settings
 from srv.database.auto_migrations import run_all as run_auto_migrations
 from srv.database.database import engine
-from srv.routers import account, ai, auth, backtest, budget, card, category, demo, employee, entity, holding, liability, markets, news, property as property_router, reminder, smart_money, strategy, strategy_cron, subscription, telegram, transaction, vehicle
+from srv.routers import account, ai, auth, backtest, budget, card, category, demo, employee, employee_document, employee_leave, entity, holding, liability, markets, news, property as property_router, reminder, smart_money, strategy, strategy_cron, subscription, telegram, transaction, vehicle
 
 # Idempotent schema migrations on cold start (adds TRANSFER enum value,
 # transactions.linked_transaction_id, accounts.transfer_patterns).
@@ -62,6 +62,8 @@ api.include_router(holding.router)
 api.include_router(property_router.router)
 api.include_router(vehicle.router)
 api.include_router(employee.router)
+api.include_router(employee_document.router)
+api.include_router(employee_leave.router)
 api.include_router(reminder.router)
 api.include_router(demo.router)
 app.include_router(api)
