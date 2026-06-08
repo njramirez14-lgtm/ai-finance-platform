@@ -11,12 +11,20 @@ const api = axios.create({
   },
 });
 
+// Endpoints that legitimately take a long time (PDF/Vision processing, AI
+// generation). The serverless functions allow up to 300s (vercel.json
+// maxDuration), so the 30s default would abort them. Give them a long timeout.
+const SLOW_ENDPOINT = /(upload|statement|\/ai\b|\/ai\/|ai-generate|analyze|scan|advisor|trade-committee|execute-trade)/i;
+
 // Add token to requests if available
 api.interceptors.request.use(
   (config) => {
     const { auth } = useStore.getState();
     if (auth?.accessToken) {
       config.headers.Authorization = `Bearer ${auth.accessToken}`;
+    }
+    if (SLOW_ENDPOINT.test(config.url || "")) {
+      config.timeout = 290000;
     }
     return config;
   },
