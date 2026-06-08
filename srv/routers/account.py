@@ -116,29 +116,45 @@ def _chunk_text(text: str, max_lines: int = CHUNK_LINES) -> list[str]:
     return chunks
 
 
-def _extract_one(model, prompt: str) -> list[dict]:
-    """Call Gemini once (sync). Returns parsed list (or raises)."""
+def _normalize_parsed(parsed) -> tuple[list[dict], float | None]:
+    """Accept either a bare array of rows (legacy) or an object
+    {closing_balance, transactions}. Returns (rows, closing_balance)."""
+    if isinstance(parsed, list):
+        return parsed, None
+    if isinstance(parsed, dict):
+        rows = parsed.get("transactions")
+        rows = rows if isinstance(rows, list) else []
+        cb = parsed.get("closing_balance")
+        try:
+            cb = float(cb) if cb is not None else None
+        except (TypeError, ValueError):
+            cb = None
+        return rows, cb
+    return [], None
+
+
+def _extract_one(model, prompt: str) -> tuple[list[dict], float | None]:
+    """Call Gemini once (sync). Returns (rows, closing_balance) (or raises)."""
     response = model.generate_content(prompt)
     raw = (response.text or "").strip()
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     if not cleaned:
-        return []
-    parsed = json.loads(cleaned)
-    return parsed if isinstance(parsed, list) else []
+        return [], None
+    return _normalize_parsed(json.loads(cleaned))
 
 
-async def _extract_one_async(model, prompt: str, sem: asyncio.Semaphore) -> tuple[list[dict], str | None]:
+async def _extract_one_async(model, prompt: str, sem: asyncio.Semaphore) -> tuple[list[dict], float | None, str | None]:
     """Async variant with a concurrency semaphore.
-    Returns (rows, error_kind). error_kind in {None, 'rate_limit', 'other'}."""
+    Returns (rows, closing_balance, error_kind). error_kind in {None, 'rate_limit', 'other'}."""
     async with sem:
         try:
-            rows = await asyncio.to_thread(_extract_one, model, prompt)
-            return rows, None
+            rows, cb = await asyncio.to_thread(_extract_one, model, prompt)
+            return rows, cb, None
         except Exception as exc:
             msg = str(exc)
             if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-                return [], "rate_limit"
-            return [], "other"
+                return [], None, "rate_limit"
+            return [], None, "other"
 
 
 def _verify_entity(db: Session, entity_id: int | None, user_id: int) -> None:
@@ -363,19 +379,31 @@ def adjust_balance(
 
 
 PROMPT_TEMPLATE = """Eres un experto extractor y categorizador de transacciones bancarias en España.
-Analiza el siguiente texto y devuelve UN JSON ARRAY (sin markdown) con esta estructura:
-[
-  {{
-    "amount": 100.50,
-    "type": "EXPENSE",
-    "description": "Mercadona compra",
-    "date": "2026-05-09",
-    "merchant": "Mercadona",
-    "category": "Alimentación"
-  }}
-]
+Analiza el siguiente texto y devuelve UN JSON OBJECT (sin markdown) con esta estructura:
+{{
+  "closing_balance": 140.01,
+  "transactions": [
+    {{
+      "amount": 100.50,
+      "type": "EXPENSE",
+      "description": "Mercadona compra",
+      "date": "2026-05-09",
+      "merchant": "Mercadona",
+      "category": "Alimentación"
+    }}
+  ]
+}}
 Reglas:
-- Valores negativos en el extracto → EXPENSE; positivos → INCOME.
+- closing_balance: el SALDO DISPONIBLE / saldo actual de la CUENTA que muestre el extracto
+  (etiquetas típicas: "Saldo disponible", "Saldo final", "Saldo a fecha", "Saldo actual").
+  Es el saldo total de la cuenta, NO el saldo parcial que aparece junto a cada línea.
+  Devuélvelo como número con signo. Si el extracto NO muestra un saldo disponible/actual de
+  la cuenta, pon null.
+- type: "EXPENSE" (cargo), "INCOME" (abono) o "TRANSFER". Usa TRANSFER para movimientos entre
+  cuentas propias del mismo titular: "TRASPASO PROPIO", "TRASPASO ENTRE CUENTAS", o
+  transferencias cuyo ordenante/beneficiario sea el propio titular de la cuenta. Las TRANSFER
+  NO son ni ingreso ni gasto y no se categorizan.
+- Valores negativos en el extracto → EXPENSE; positivos → INCOME (salvo que sea TRANSFER).
 - amount siempre en positivo absoluto.
 - date YYYY-MM-DD. Si falta, usa fecha de hoy.
 - description: concepto bruto del banco, limpio (sin códigos basura).
@@ -398,7 +426,7 @@ Reglas:
   - Nómina (salario, paga extra)
   - Inversión (compra/venta acciones, ETFs, cripto, fondos)
   - Otros (sólo si nada encaja)
-- Si no encuentras transacciones devuelve [].
+- Si no encuentras transacciones devuelve {{"closing_balance": null, "transactions": []}}.
 
 Texto:
 {text}
@@ -447,35 +475,34 @@ async def upload_statement(
     if is_pdf and len(text_content.strip()) < 100:
         pdf_chunks = _split_pdf_into_chunks(content, pages_per_chunk=3)
 
-        async def _vision_one(pdf_bytes: bytes, sem: asyncio.Semaphore) -> tuple[list[dict], str | None]:
-            def _call() -> list[dict]:
+        async def _vision_one(pdf_bytes: bytes, sem: asyncio.Semaphore) -> tuple[list[dict], float | None, str | None]:
+            def _call() -> tuple[list[dict], float | None]:
                 resp = model.generate_content([
                     {"mime_type": "application/pdf", "data": pdf_bytes},
                     PROMPT_TEMPLATE.format(text="(see attached PDF)"),
                 ])
                 raw = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
                 if not raw:
-                    return []
-                data = json.loads(raw)
-                return data if isinstance(data, list) else []
+                    return [], None
+                return _normalize_parsed(json.loads(raw))
             async with sem:
                 try:
-                    rows = await asyncio.to_thread(_call)
-                    return rows, None
+                    rows, cb = await asyncio.to_thread(_call)
+                    return rows, cb, None
                 except json.JSONDecodeError:
-                    return [], "other"
+                    return [], None, "other"
                 except Exception as exc:
                     msg = str(exc)
                     if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-                        return [], "rate_limit"
-                    return [], "other"
+                        return [], None, "rate_limit"
+                    return [], None, "other"
 
         sem = asyncio.Semaphore(10)
         tasks = [_vision_one(c, sem) for c in pdf_chunks]
         try:
             results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
         except asyncio.TimeoutError:
-            results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
+            results = [t.result() if t.done() and not t.exception() else ([], None, "other") for t in tasks]
         used_vision = True
         chunks = [f"(pdf-vision page {i*3+1})" for i in range(len(pdf_chunks))]
     else:
@@ -502,12 +529,13 @@ async def upload_statement(
             results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=260.0)
         except asyncio.TimeoutError:
             # Something hung; collect whatever finished
-            results = [(t.result()[0], None) if t.done() and not t.exception() else ([], "other") for t in tasks]
+            results = [t.result() if t.done() and not t.exception() else ([], None, "other") for t in tasks]
 
     parsed: list[dict] = []
     failed_chunks = 0
     rate_limited = False
-    for rows, err in results:
+    closing_balance: float | None = None
+    for rows, cb, err in results:
         if err == "rate_limit":
             rate_limited = True
             continue
@@ -515,6 +543,10 @@ async def upload_statement(
             failed_chunks += 1
             continue
         parsed.extend(rows)
+        # Keep the first available-balance the model reported (the header/page
+        # that shows "Saldo disponible"); used below to pin the real balance.
+        if closing_balance is None and cb is not None:
+            closing_balance = cb
 
     if not parsed and rate_limited:
         raise HTTPException(
@@ -565,10 +597,13 @@ async def upload_statement(
         cat_index[key] = cat
         return cat.id
 
-    # Parse the account's transfer patterns once.
-    transfer_keywords: list[str] = []
+    # Internal-transfer keywords: account-configured patterns plus sensible
+    # defaults so own-account movements (traspaso propio) aren't counted as
+    # income/expense even when no patterns were configured.
+    DEFAULT_TRANSFER_KEYWORDS = ["traspaso propio", "traspaso entre cuentas"]
+    transfer_keywords: list[str] = list(DEFAULT_TRANSFER_KEYWORDS)
     if account.transfer_patterns:
-        transfer_keywords = [
+        transfer_keywords += [
             p.strip().lower()
             for p in re.split(r"[,\n]+", account.transfer_patterns)
             if p.strip()
@@ -579,6 +614,16 @@ async def upload_statement(
             return False
         low = text_desc.lower()
         return any(kw in low for kw in transfer_keywords)
+
+    # Dedup against what's already stored for this account so re-uploading the
+    # same (or an overlapping) statement doesn't double-count.
+    existing_keys = {
+        (d.date() if d else None, round(float(a or 0), 2), t, (ds or "")[:200])
+        for d, a, t, ds in db.query(
+            Transaction.date, Transaction.amount, Transaction.type, Transaction.description
+        ).filter(Transaction.account_id == account.id).all()
+    }
+    skipped_duplicates = 0
 
     created = 0
     transfers_flagged = 0
@@ -594,7 +639,12 @@ async def upload_statement(
         try:
             amount = float(item.get("amount", 0))
             tx_type_raw = str(item.get("type", "EXPENSE")).upper()
-            tx_type = TransactionType.INCOME if tx_type_raw == "INCOME" else TransactionType.EXPENSE
+            if tx_type_raw == "TRANSFER":
+                tx_type = TransactionType.TRANSFER
+            elif tx_type_raw == "INCOME":
+                tx_type = TransactionType.INCOME
+            else:
+                tx_type = TransactionType.EXPENSE
             raw_desc = str(item.get("description") or "").strip()
             merchant = str(item.get("merchant") or "").strip()
             if merchant and raw_desc and merchant.lower() not in raw_desc.lower():
@@ -613,13 +663,21 @@ async def upload_statement(
             continue
         if amount <= 0:
             continue
-        # If the line matches a configured transfer pattern on this account,
-        # demote EXPENSE → TRANSFER so it doesn't double-count with the
-        # merchant-side leg in the destination account.
-        if tx_type == TransactionType.EXPENSE and _is_transfer(desc):
+        # If the line matches a transfer pattern (own-account movement), demote
+        # INCOME/EXPENSE → TRANSFER so it doesn't count as real income/expense
+        # (it's the same money moving between the user's own accounts).
+        if tx_type != TransactionType.TRANSFER and _is_transfer(desc):
             tx_type = TransactionType.TRANSFER
-            transfers_flagged += 1
+        if tx_type == TransactionType.TRANSFER:
             cat_name = None  # transfers aren't categorized
+        # Skip duplicates (same day, amount, type, description).
+        dup_key = (tx_date.date(), round(amount, 2), tx_type, (desc or "")[:200])
+        if dup_key in existing_keys:
+            skipped_duplicates += 1
+            continue
+        existing_keys.add(dup_key)
+        if tx_type == TransactionType.TRANSFER:
+            transfers_flagged += 1
         category_id = _resolve_category(cat_name, tx_type) if tx_type != TransactionType.TRANSFER else None
         db.add(Transaction(
             amount=amount,
@@ -657,10 +715,34 @@ async def upload_statement(
             bucket["expense"] += amount
     db.commit()
     db.refresh(account)
-    rate_limited_count = sum(1 for _, e in results if e == "rate_limit")
+
+    # Pin the account balance to the statement's real available balance, so the
+    # total comes out right automatically — independent of which period was
+    # imported, duplicates, or transfer mis-tagging. Since
+    # balance = initial_balance + income - expense (transfers excluded), we set
+    # initial_balance = closing_balance - (income - expense).
+    balance_pinned = None
+    if closing_balance is not None:
+        inc = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.account_id == account.id,
+            Transaction.type == TransactionType.INCOME,
+        ).scalar() or 0
+        exp = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.account_id == account.id,
+            Transaction.type == TransactionType.EXPENSE,
+        ).scalar() or 0
+        net = Decimal(str(inc)) - Decimal(str(exp))
+        account.initial_balance = Decimal(str(closing_balance)) - net
+        db.commit()
+        db.refresh(account)
+        balance_pinned = float(closing_balance)
+
+    rate_limited_count = sum(1 for *_, e in results if e == "rate_limit")
     return {
         "success": True,
         "imported": created,
+        "skipped_duplicates": skipped_duplicates,
+        "balance_pinned": balance_pinned,
         "transfers_flagged": transfers_flagged,
         "used_vision": used_vision,
         "chunks_processed": len(chunks) - failed_chunks - rate_limited_count,

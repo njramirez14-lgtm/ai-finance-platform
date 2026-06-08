@@ -1115,6 +1115,16 @@ function UploadStatement({ accounts, onSaved }) {
               <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <div>Importadas <strong>{result.imported}</strong> transacciones con categorías asignadas por IA.</div>
+                {result.balance_pinned != null && (
+                  <div className="text-xs text-emerald-300/90 mt-0.5">
+                    Saldo de la cuenta ajustado al del extracto: <strong>{fmt(result.balance_pinned)}</strong>
+                  </div>
+                )}
+                {result.skipped_duplicates > 0 && (
+                  <div className="text-xs text-emerald-300/70 mt-0.5">
+                    {result.skipped_duplicates} movimiento(s) duplicado(s) omitido(s)
+                  </div>
+                )}
                 {result.chunks_total > 1 && (
                   <div className="text-xs text-emerald-300/70 mt-0.5">
                     Procesados {result.chunks_processed}/{result.chunks_total} chunks
