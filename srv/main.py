@@ -8,9 +8,13 @@ from srv.database.auto_migrations import run_all as run_auto_migrations
 from srv.database.database import engine
 from srv.routers import account, ai, auth, backtest, budget, card, category, demo, employee, employee_document, employee_leave, entity, holding, liability, markets, news, notifications, property as property_router, reminder, smart_money, strategy, strategy_cron, subscription, telegram, transaction, vehicle
 
-# Idempotent schema migrations on cold start (adds TRANSFER enum value,
-# transactions.linked_transaction_id, accounts.transfer_patterns).
-run_auto_migrations(engine)
+# Schema migrations used to run on every serverless cold start, which blocked
+# the whole API boot (no endpoint, not even /health, responded) while Neon woke
+# up — the "infinite spinner / won't load" symptom. Migrations are idempotent
+# and already applied, so they no longer run at import. To apply a new one,
+# deploy once with RUN_MIGRATIONS_ON_BOOT=1, then unset it.
+if os.environ.get("RUN_MIGRATIONS_ON_BOOT") == "1":
+    run_auto_migrations(engine)
 
 app = FastAPI(
     title="Personal Finance Dashboard API",
