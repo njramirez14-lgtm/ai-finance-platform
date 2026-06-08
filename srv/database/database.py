@@ -16,13 +16,10 @@ else:
     # ~60s "infinite spinner" on the first request after idle). pool_pre_ping
     # validates/replaces stale connections, pool_recycle drops them before Neon
     # does, and connect_timeout makes any reconnect fail fast instead of hanging.
-    connect_args = {
-        "connect_timeout": 10,
-        # Cap any single query (incl. the first one while Neon wakes from
-        # scale-to-zero) so a request fails fast and is retried instead of
-        # hanging for a minute.
-        "options": "-c statement_timeout=20000",
-    }
+    # NOTE: do NOT pass statement_timeout via connect_args "options" — Neon's
+    # pooled endpoint (PgBouncer) rejects it as an "unsupported startup
+    # parameter" and every connection fails. connect_timeout is fine.
+    connect_args = {"connect_timeout": 10}
     engine_kwargs = {"pool_pre_ping": True, "pool_recycle": 300}
 
 engine = create_engine(
