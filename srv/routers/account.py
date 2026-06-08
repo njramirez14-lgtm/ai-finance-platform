@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from srv.api.deps import get_db
@@ -222,6 +222,47 @@ def _account_balance(db: Session, account: Account) -> Decimal:
     return initial + Decimal(str(income)) - Decimal(str(expense))
 
 
+def _holdings_market_value(db: Session, account: Account) -> Decimal | None:
+    """If this account holds investments (linked by account_id or by a matching
+    broker name, e.g. an account named "Trade Republic" and holdings with
+    broker="Trade Republic"), return their live market value so the account
+    balance tracks the portfolio automatically. Returns None if it holds none."""
+    from srv.models.holding import Holding
+
+    holdings = (
+        db.query(Holding)
+        .filter(
+            Holding.user_id == account.user_id,
+            or_(
+                Holding.account_id == account.id,
+                func.lower(func.coalesce(Holding.broker, "")) == (account.name or "").strip().lower(),
+            ),
+        )
+        .all()
+    )
+    if not holdings:
+        return None
+
+    # Live quotes (cached 60s in-process by the holdings router). Fall back to
+    # cost basis per holding if a quote is unavailable, so the balance is still
+    # sensible when the price feed is down.
+    try:
+        from srv.routers.holding import _fetch_quotes
+
+        quotes = _fetch_quotes([h.symbol for h in holdings if h.symbol])
+    except Exception:
+        quotes = {}
+
+    total = Decimal("0")
+    for h in holdings:
+        qty = Decimal(str(h.quantity or 0))
+        quote = quotes.get(h.symbol) or {}
+        price = quote.get("price")
+        unit = Decimal(str(price)) if price is not None else Decimal(str(h.avg_buy_price or 0))
+        total += qty * unit
+    return total.quantize(Decimal("0.01"))
+
+
 def _account_monthly_flow(db: Session, account_id: int) -> tuple[Decimal, Decimal]:
     cutoff = datetime.utcnow() - timedelta(days=30)
     rows = (
@@ -246,6 +287,10 @@ def _to_out(db: Session, account: Account) -> dict:
         .all()
     )
     monthly_income, monthly_expense = _account_monthly_flow(db, account.id)
+    # Investment accounts track the live value of their holdings, not the cash
+    # transactions, so the balance and total net worth stay up to date.
+    market_value = _holdings_market_value(db, account)
+    balance = market_value if market_value is not None else _account_balance(db, account)
     return {
         "id": account.id,
         "user_id": account.user_id,
@@ -258,7 +303,7 @@ def _to_out(db: Session, account: Account) -> dict:
         "notes": account.notes,
         "transfer_patterns": account.transfer_patterns,
         "created_at": account.created_at,
-        "balance": _account_balance(db, account),
+        "balance": balance,
         "cards": [CardMini.model_validate(c) for c in cards],
         "monthly_income": monthly_income,
         "monthly_expense": monthly_expense,
