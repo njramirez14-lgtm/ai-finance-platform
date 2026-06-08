@@ -133,6 +133,31 @@ def _normalize_parsed(parsed) -> tuple[list[dict], float | None]:
     return [], None
 
 
+def _extract_closing_balance_from_text(text: str) -> float | None:
+    """Deterministically pull the account's available/closing balance from
+    common Spanish statements (e.g. CaixaBank "Saldo disponible ... + 3,19 €").
+    More reliable than depending on the LLM to return it. Returns None if no
+    such labelled balance is present (e.g. Wise transaction histories)."""
+    if not text:
+        return None
+    low = text.lower()
+    for label in ("saldo disponible", "saldo actual", "saldo final", "saldo a fecha"):
+        i = low.find(label)
+        if i == -1:
+            continue
+        # First monetary amount (".. €") after the label. The IBAN in between
+        # has no € sign, so it won't match.
+        m = re.search(r"([+-]?)\s*(\d[\d.]*(?:,\d{1,2})?)\s*€", text[i : i + 200])
+        if m:
+            num = m.group(2).replace(".", "").replace(",", ".")
+            try:
+                val = float(num)
+                return -val if m.group(1) == "-" else val
+            except ValueError:
+                pass
+    return None
+
+
 def _extract_one(model, prompt: str) -> tuple[list[dict], float | None]:
     """Call Gemini once (sync). Returns (rows, closing_balance) (or raises)."""
     response = model.generate_content(prompt)
@@ -715,6 +740,14 @@ async def upload_statement(
             bucket["expense"] += amount
     db.commit()
     db.refresh(account)
+
+    # Prefer a deterministically-extracted "Saldo disponible" over whatever the
+    # LLM returned — the LLM sometimes omits it (returns a bare array), which
+    # would silently skip the balance pin.
+    if not used_vision:
+        det_cb = _extract_closing_balance_from_text(text_content)
+        if det_cb is not None:
+            closing_balance = det_cb
 
     # Pin the account balance to the statement's real available balance, so the
     # total comes out right automatically — independent of which period was
