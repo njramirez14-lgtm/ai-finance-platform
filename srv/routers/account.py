@@ -749,6 +749,12 @@ async def upload_statement(
         if det_cb is not None:
             closing_balance = det_cb
 
+    # Pass-through wallets (e.g. PayPal) don't hold money — the charges are
+    # funded by a linked bank account — so their own balance must always net to
+    # 0 (the itemised transactions are kept only for categorisation).
+    if closing_balance is None and "paypal" in (account.name or "").lower():
+        closing_balance = 0.0
+
     # Pin the account balance to the statement's real available balance, so the
     # total comes out right automatically — independent of which period was
     # imported, duplicates, or transfer mis-tagging. Since
